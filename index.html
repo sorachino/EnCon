@@ -237,7 +237,9 @@ async function apiCall(payload){
 function textOf(j){return(j.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');}
 async function callClaude(system,user,maxTokens){
   const j=await apiCall({max_tokens:maxTokens,system,messages:[{role:'user',content:user}]});
-  return textOf(j);
+  const t=textOf(j);
+  if(!t.trim())throw uerr('AIの返答が空でした。(stop_reason: '+(j.stop_reason||'?')+')もう一度試してください。');
+  return t;
 }
 /* 分析結果は「ツール呼び出し」の入力として受け取る(文章からJSONを切り出さない) */
 const REVIEW_TOOL={
@@ -254,7 +256,7 @@ const REVIEW_TOOL={
   },required:['picks','others','mishear','tag_counts','next']}
 };
 async function callReview(system,user){
-  const j=await apiCall({max_tokens:4000,system,messages:[{role:'user',content:user}],tools:[REVIEW_TOOL],tool_choice:{type:'tool',name:'submit_review'}});
+  const j=await apiCall({max_tokens:8000,system,messages:[{role:'user',content:user}],tools:[REVIEW_TOOL]});
   if(j.stop_reason==='max_tokens')throw uerr('出力が長すぎて途中で切れました。文字起こしを短くして試してください。');
   const tu=(j.content||[]).find(b=>b.type==='tool_use');
   if(tu&&tu.input){
@@ -263,7 +265,8 @@ async function callReview(system,user){
   }
   const txt=textOf(j);
   try{return extractJson(txt);}catch(e){
-    throw uerr('AIの返答を読み取れませんでした。返答の冒頭: 「'+txt.slice(0,100).replace(/\s+/g,' ')+'」(stop_reason: '+(j.stop_reason||'?')+')');
+    const types=(j.content||[]).map(b=>b.type).join(',')||'なし';
+    throw uerr('AIの返答を読み取れませんでした。(stop_reason: '+(j.stop_reason||'?')+' / 内容: '+types+')'+(txt?' 冒頭: 「'+txt.slice(0,100).replace(/\s+/g,' ')+'」':''));
   }
 }
 function extractJson(text){
@@ -289,7 +292,7 @@ const SYSTEM_ANALYZE=`あなたは英会話レッスンの復習コーチです�
 6. tag_counts: 要修正の全件(選んだもの+others)のタグ別件数のオブジェクト。
 7. next: 今回最も多かったタグを1つ選び、{tag, action, example}。action は「次のレッスンで、〇〇の型を最低1回使う」の形の日本語1文。example はその型の英語例文1つ。
 
-結果は submit_review ツールで提出してください。文章での返答は不要です。`.replace('${TAGS}',TAGS.join(' / '));
+結果は必ず submit_review ツールを1回呼び出して提出してください。文章での返答は書かないでください。`.replace('${TAGS}',TAGS.join(' / '));
 
 function clean(s,n){return String(s==null?'':s).trim().slice(0,n);}
 function normalizeResult(j){
@@ -323,7 +326,7 @@ const SYSTEM_WEEKLY=`あなたは英会話の復習コーチです。生徒の�
 励ましの一般論や前置きは書かない。記録が少ない場合は「データが少ないので暫定」と最初に明記する。`;
 async function analyzeWeekly(tag,examples,total){
   const body='重点タグ: '+tag+'(直近7日で'+total+'件)\n'+examples.map(e=>'- ['+e.tag+'] '+e.orig+' → '+e.fix).join('\n');
-  const txt=await callClaude(SYSTEM_WEEKLY,body,700);
+  const txt=await callClaude(SYSTEM_WEEKLY,body,3000);
   state.weekly[tag+'@'+todayStr()]=clean(txt,1200);save();return txt;
 }
 
