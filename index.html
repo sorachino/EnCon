@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>EnCon｜英会話ミスログ</title>
+<style>
+:root{
+  --bg:#EEF1F5; --surface:#FFFFFF; --ink:#141C28; --muted:#586377; --line:#D3DAE4;
+  --accent:#1B5E86; --accent-ink:#FFFFFF; --mark:#FFE066; --miss:#B42318; --ok:#1F7A4D; --soft:#E4EAF1;
+  --serif:Georgia,"Times New Roman","Hiragino Mincho ProN","Yu Mincho",serif;
+  --sans:"Hiragino Sans","Noto Sans JP","Yu Gothic",system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E131A; --surface:#161D27; --ink:#E7ECF3; --muted:#9BA7B9; --line:#28323F;
+    --accent:#72B5DA; --accent-ink:#0E131A; --mark:#8A6F00; --miss:#F28B82; --ok:#6FCF97; --soft:#1F2833;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E131A; --surface:#161D27; --ink:#E7ECF3; --muted:#9BA7B9; --line:#28323F;
+  --accent:#72B5DA; --accent-ink:#0E131A; --mark:#8A6F00; --miss:#F28B82; --ok:#6FCF97; --soft:#1F2833;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.6;
+  padding-top:env(safe-area-inset-top,0px);-webkit-text-size-adjust:100%}
+header{padding:20px 20px 4px;max-width:640px;margin:0 auto}
+header h1{margin:0;font-size:1.35rem;font-weight:700;letter-spacing:.02em}
+header p{margin:2px 0 0;color:var(--muted);font-size:.85rem}
+main{max-width:640px;margin:0 auto;padding:12px 16px calc(96px + env(safe-area-inset-bottom,0px))}
+h2{font-size:1rem;margin:20px 0 8px;font-weight:700}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px}
+label{display:block;font-size:.85rem;color:var(--muted);margin-bottom:4px}
+textarea,input[type=date]{width:100%;font:inherit;font-size:16px;color:var(--ink);background:var(--bg);
+  border:1px solid var(--line);border-radius:8px;padding:10px}
+textarea{min-height:190px;resize:vertical;line-height:1.5}
+.row{display:flex;gap:10px;align-items:end;margin-top:10px}
+.row>div{flex:1}
+button{font:inherit;font-size:15px;cursor:pointer;min-height:44px;border-radius:8px;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink);padding:8px 14px}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+button.quiet{border:none;background:none;color:var(--muted);min-height:36px;padding:4px 8px;font-size:.85rem}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.msg{margin-top:10px;font-size:.9rem;color:var(--ok);min-height:1.4em}
+.msg.warn{color:var(--miss)}
+details{margin-top:14px}
+summary{cursor:pointer;color:var(--muted);font-size:.9rem;min-height:36px;display:flex;align-items:center}
+pre{white-space:pre-wrap;background:var(--soft);border-radius:8px;padding:10px;font-size:.8rem;line-height:1.5;overflow-x:auto;margin:6px 0}
+.datehead{font-size:.85rem;color:var(--muted);margin:22px 0 8px;font-weight:700}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+.card.done{opacity:.55}
+.tag{display:inline-block;font-size:.75rem;padding:1px 9px;border-radius:999px;background:var(--soft);color:var(--muted);border:1px solid var(--line)}
+.orig{font-family:var(--serif);font-size:1.02rem;margin:10px 0 4px;color:var(--muted);
+  text-decoration:line-through;text-decoration-color:var(--miss);text-decoration-thickness:1.5px}
+.fix{font-family:var(--serif);font-size:1.15rem;line-height:1.55;margin:0 0 12px}
+.fix span{background:linear-gradient(transparent 58%,var(--mark) 58%);padding:0 2px}
+.checks{display:flex;gap:8px;flex-wrap:wrap}
+.checks button{flex:1;min-width:96px;font-size:.9rem;padding:8px 6px}
+.checks button[aria-pressed=true]{background:var(--ok);border-color:var(--ok);color:#fff;font-weight:700}
+.cardfoot{display:flex;justify-content:space-between;align-items:center;margin-top:6px}
+.filter{display:flex;align-items:center;justify-content:space-between;margin-top:8px}
+.empty{text-align:center;color:var(--muted);padding:36px 12px;font-size:.95rem}
+.bars{display:grid;gap:10px}
+.bar .top{display:flex;justify-content:space-between;font-size:.9rem;margin-bottom:3px}
+.bar .top small{color:var(--muted)}
+.track{height:12px;background:var(--soft);border-radius:6px;overflow:hidden}
+.fill{height:100%;background:var(--accent);border-radius:6px}
+.focus{border-left:4px solid var(--accent)}
+.focus h3{margin:0 0 4px;font-size:1.05rem}
+.focus p{margin:0 0 8px;color:var(--muted);font-size:.9rem}
+.ex{font-family:var(--serif);font-size:.95rem;margin:8px 0 0;padding-top:8px;border-top:1px solid var(--line)}
+.ex s{color:var(--muted);text-decoration-color:var(--miss)}
+.stat{display:flex;gap:10px}
+.stat .panel{flex:1;text-align:center;padding:10px}
+.stat b{display:block;font-size:1.4rem;line-height:1.2}
+.stat span{font-size:.8rem;color:var(--muted)}
+nav{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);
+  display:flex;padding-bottom:env(safe-area-inset-bottom,0px)}
+nav button{flex:1;border:none;border-radius:0;background:none;min-height:56px;font-size:.95rem;color:var(--muted);
+  border-top:3px solid transparent}
+nav button[aria-selected=true]{color:var(--accent);font-weight:700;border-top-color:var(--accent)}
+#toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);
+  background:var(--ink);color:var(--bg);padding:8px 16px;border-radius:999px;font-size:.85rem;opacity:0;pointer-events:none;transition:opacity .2s}
+#toast.show{opacity:1}
+@media (prefers-reduced-motion:reduce){#toast{transition:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1>EnCon</h1>
+  <p>レッスンのミスを、言い直して、記録する。</p>
+</header>
+<main id="view"></main>
+<nav role="tablist" aria-label="画面">
+  <button role="tab" data-tab="paste">貼る</button>
+  <button role="tab" data-tab="drill">ドリル</button>
+  <button role="tab" data-tab="stats">集計</button>
+</nav>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const TAGS=['時制','冠詞・名詞の数','語順','助動詞・be動詞の欠落','主語・目的語の脱落','前置詞','複雑構文','語彙選択','流れの破綻','誤変換'];
+const KEY='encon.v1';
+let state=load();
+let tab='drill';
+let onlyOpen=true;
+
+function load(){
+  try{const s=JSON.parse(localStorage.getItem(KEY));
+    if(s&&Array.isArray(s.entries))return{entries:s.entries,counts:s.counts||{}};}catch(e){}
+  return{entries:[],counts:{}};
+}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(state));return true;}catch(e){toast('保存できませんでした');return false;}}
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmt(y,m,d){return y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');}
+function todayStr(){const n=new Date();return fmt(n.getFullYear(),n.getMonth()+1,n.getDate());}
+function addDays(s,n){const[y,m,d]=s.split('-').map(Number);const t=new Date(y,m-1,d+n);return fmt(t.getFullYear(),t.getMonth()+1,t.getDate());}
+function normDate(s){
+  if(!s)return'';
+  let m=s.match(/^(\d{4})[-\/.年](\d{1,2})[-\/.月](\d{1,2})日?$/);
+  if(m)return fmt(+m[1],+m[2],+m[3]);
+  m=s.match(/^(\d{1,2})[\/.月](\d{1,2})日?$/);
+  if(m)return fmt(new Date().getFullYear(),+m[1],+m[2]);
+  return'';
+}
+function niceDate(s){
+  const[y,m,d]=s.split('-').map(Number);const w='日月火水木金土'[new Date(y,m-1,d).getDay()];
+  return m+'月'+d+'日('+w+')';
+}
+
+/* 「日付 | タグ | 元の文 → 直した文」の行と「今日のタグ件数: 時制 2 / 冠詞・名詞の数 1」の行を読む */
+function parseLog(text,fallback){
+  const entries=[],counts={};let lastDate=fallback;let bad=0;
+  for(const raw of text.split(/\r?\n/)){
+    const line=raw.trim();if(!line)continue;
+    if(/^今日のタグ件数/.test(line)){
+      const body=line.replace(/^今日のタグ件数\s*[:：]?\s*/,'');
+      const c=counts[lastDate]=counts[lastDate]||{};
+      for(const part of body.split(/[\/／]/)){
+        const m=part.trim().match(/^(.+?)\s+(\d+)$/);
+        if(m)c[m[1].trim()]=(c[m[1].trim()]||0)+Number(m[2]);
+      }
+      continue;
+    }
+    const parts=line.split(/[|｜]/).map(s=>s.trim());
+    if(parts.length<3){bad++;continue;}
+    if(parts[0]==='日付'&&parts[1]==='タグ')continue;
+    const seg=parts.slice(2).join(' | ').split(/\s*(?:→|->|=>)\s*/);
+    if(seg.length<2||!seg[0]||!seg[seg.length-1]){bad++;continue;}
+    const date=normDate(parts[0])||fallback;lastDate=date;
+    entries.push({date,tag:parts[1],orig:seg[0],fix:seg.slice(1).join(' → ')});
+  }
+  return{entries,counts,bad};
+}
+function addParsed(p){
+  let added=0,dup=0;
+  const key=e=>e.date+'|'+e.orig+'|'+e.fix;
+  const have=new Set(state.entries.map(key));
+  for(const e of p.entries){
+    if(have.has(key(e))){dup++;continue;}
+    state.entries.push({id:uid(),date:e.date,tag:e.tag,orig:e.orig,fix:e.fix,said:false,wrote:false,used:false});
+    have.add(key(e));added++;
+  }
+  for(const d in p.counts){state.counts[d]=p.counts[d];}
+  return{added,dup};
+}
+/* 期間内のタグ別件数。件数行がある日はそれを優先し、ない日は記録した文の数で数える */
+function tally(from,to){
+  const t={};
+  const withCounts=new Set(Object.keys(state.counts).filter(d=>d>=from&&d<=to));
+  for(const d of withCounts)for(const k in state.counts[d])t[k]=(t[k]||0)+state.counts[d][k];
+  for(const e of state.entries)if(e.date>=from&&e.date<=to&&!withCounts.has(e.date))t[e.tag]=(t[e.tag]||0)+1;
+  return t;
+}
+
+function toast(s){
+  const el=document.getElementById('toast');el.textContent=s;el.classList.add('show');
+  clearTimeout(toast.t);toast.t=setTimeout(()=>el.classList.remove('show'),1800);
+}
+
+function viewPaste(){
+  const ex='9/30 | 時制 | I go to the office yesterday. → I went to the office yesterday.\n今日のタグ件数: 時制 2 / 冠詞・名詞の数 1';
+  return`
+  <h2>ミスログを貼る</h2>
+  <div class="panel">
+    <label for="log">チャットで出た「ミスログ」をそのまま貼ります</label>
+    <textarea id="log" placeholder="日付 | タグ | 元の文 → 直した文"></textarea>
+    <div class="row">
+      <div><label for="fallback">日付が空の行に使う日</label><input id="fallback" type="date" value="${todayStr()}"></div>
+      <button class="primary" data-act="add">追加する</button>
+    </div>
+    <div class="msg" id="msg"></div>
+    <details><summary>貼り付けの形式</summary>
+      <pre>${esc(ex)}</pre>
+      <p style="margin:6px 0 0;font-size:.85rem;color:var(--muted)">「→」の左が元の文、右が直した文です。タグは ${esc(TAGS.join(' / '))} のいずれかを使います。同じ日・同じ文は重複として追加されません。</p>
+    </details>
+  </div>
+  <h2>バックアップ</h2>
+  <div class="panel">
+    <p style="margin:0 0 10px;font-size:.9rem;color:var(--muted)">データはこの端末のブラウザ内だけに保存されます。ブラウザのデータを消したり端末を変えたりすると失われるので、ときどきコピーしてメモに残してください。</p>
+    <button data-act="export">全データをコピー</button>
+    <details><summary>バックアップから読み込む</summary>
+      <textarea id="import" style="min-height:90px" placeholder="コピーしたデータを貼る"></textarea>
+      <div style="margin-top:8px"><button data-act="import">読み込む(現在のデータは置き換わります)</button></div>
+    </details>
+  </div>`;
+}
+
+function viewDrill(){
+  const list=state.entries.slice().sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0);
+  const open=e=>!(e.said&&e.wrote&&e.used);
+  const shown=onlyOpen?list.filter(open):list;
+  let html=`<div class="filter"><h2 style="margin:0">ドリル</h2>
+    <button class="quiet" data-act="filter">${onlyOpen?'完了分も表示する':'未完了だけ表示する'}</button></div>`;
+  if(!state.entries.length)return html+`<div class="empty">まだ何もありません。<br>「貼る」でミスログを追加してください。</div>`;
+  if(!shown.length)return html+`<div class="empty">未完了のものはありません。</div>`;
+  let last='';
+  for(const e of shown){
+    if(e.date!==last){html+=`<div class="datehead">${esc(niceDate(e.date))}</div>`;last=e.date;}
+    const btn=(k,label)=>`<button data-act="toggle" data-id="${e.id}" data-k="${k}" aria-pressed="${e[k]}">${label}</button>`;
+    html+=`<article class="card ${open(e)?'':'done'}">
+      <span class="tag">${esc(e.tag)}</span>
+      <p class="orig">${esc(e.orig)}</p>
+      <p class="fix"><span>${esc(e.fix)}</span></p>
+      <div class="checks">${btn('said','3回言った')}${btn('wrote','書き写した')}${btn('used','会話で使った')}</div>
+      <div class="cardfoot"><span></span><button class="quiet" data-act="del" data-id="${e.id}">削除</button></div>
+    </article>`;
+  }
+  return html;
+}
+
+function viewStats(){
+  const today=todayStr();
+  const t7=tally(addDays(today,-6),today),p7=tally(addDays(today,-13),addDays(today,-7));
+  const rows=Object.entries(t7).sort((a,b)=>b[1]-a[1]);
+  const inWeek=state.entries.filter(e=>e.date>=addDays(today,-6)&&e.date<=today);
+  const done=inWeek.filter(e=>e.said&&e.wrote&&e.used).length;
+  let html=`<h2>直近7日</h2>
+    <div class="stat"><div class="panel"><b>${rows.reduce((s,r)=>s+r[1],0)}</b><span>ミスの件数</span></div>
+    <div class="panel"><b>${inWeek.length?done+'/'+inWeek.length:'-'}</b><span>ドリル完了</span></div></div>`;
+  if(!rows.length)return html+`<div class="empty">この7日間の記録がありません。</div>`;
+  const[topTag,topN]=rows[0];
+  const ex=state.entries.filter(e=>e.tag===topTag).sort((a,b)=>a.date<b.date?1:-1).slice(0,3);
+  html+=`<h2>来週の重点</h2><div class="panel focus"><h3>${esc(topTag)}</h3>
+    <p>直近7日で${topN}件。次のレッスンで、この型を最低1回使ってください。</p>
+    ${ex.map(e=>`<div class="ex"><s>${esc(e.orig)}</s><br>${esc(e.fix)}</div>`).join('')}</div>`;
+  html+=`<h2>タグ別</h2><div class="panel bars">`;
+  for(const[k,n]of rows){
+    const p=p7[k]||0;
+    html+=`<div class="bar"><div class="top"><span>${esc(k)}</span><small>${n}件(その前の7日: ${p}件)</small></div>
+      <div class="track"><div class="fill" style="width:${Math.round(n/topN*100)}%"></div></div></div>`;
+  }
+  html+=`</div>`;
+  const unknown=rows.filter(r=>!TAGS.includes(r[0]));
+  if(unknown.length)html+=`<p style="font-size:.85rem;color:var(--muted)">決められたタグ以外が含まれています: ${esc(unknown.map(r=>r[0]).join('、'))}</p>`;
+  return html;
+}
+
+function render(){
+  document.querySelectorAll('nav button').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===tab));
+  const v=document.getElementById('view');
+  v.innerHTML=tab==='paste'?viewPaste():tab==='drill'?viewDrill():viewStats();
+}
+
+function onClick(ev){
+  const b=ev.target.closest('button');if(!b)return;
+  if(b.dataset.tab){tab=b.dataset.tab;render();window.scrollTo(0,0);return;}
+  const act=b.dataset.act;if(!act)return;
+  if(act==='add'){
+    const text=document.getElementById('log').value;
+    const fb=document.getElementById('fallback').value||todayStr();
+    const p=parseLog(text,fb);
+    const msg=document.getElementById('msg');
+    if(!p.entries.length&&!Object.keys(p.counts).length){msg.className='msg warn';msg.textContent='読み取れる行がありませんでした。形式を確認してください。';return;}
+    const r=addParsed(p);save();
+    tab='drill';render();
+    toast(r.added+'件追加'+(r.dup?'、重複'+r.dup+'件はスキップ':'')+(p.bad?'、読めない行'+p.bad+'件':''));
+  }else if(act==='toggle'){
+    const e=state.entries.find(x=>x.id===b.dataset.id);if(!e)return;
+    e[b.dataset.k]=!e[b.dataset.k];save();render();
+  }else if(act==='del'){
+    if(confirm('この項目を削除しますか?')){state.entries=state.entries.filter(x=>x.id!==b.dataset.id);save();render();}
+  }else if(act==='filter'){onlyOpen=!onlyOpen;render();
+  }else if(act==='export'){
+    const s=JSON.stringify(state);
+    (navigator.clipboard?navigator.clipboard.writeText(s):Promise.reject()).then(()=>toast('コピーしました')).catch(()=>{
+      const ta=document.createElement('textarea');ta.value=s;document.body.appendChild(ta);ta.select();
+      try{document.execCommand('copy');toast('コピーしました');}catch(e){toast('コピーできませんでした');}ta.remove();
+    });
+  }else if(act==='import'){
+    try{
+      const s=JSON.parse(document.getElementById('import').value);
+      if(!s||!Array.isArray(s.entries))throw 0;
+      if(!confirm('現在のデータを置き換えます。よろしいですか?'))return;
+      state={entries:s.entries,counts:s.counts||{}};save();tab='drill';render();toast('読み込みました');
+    }catch(e){toast('読み込めませんでした。形式を確認してください');}
+  }
+}
+
+function init(){
+  document.addEventListener('click',onClick);
+  tab=state.entries.length?'drill':'paste';
+  render();
+}
+if(typeof document!=='undefined')init();
+</script>
+</body>
+</html>
