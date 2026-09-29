@@ -220,19 +220,51 @@ function errMsg(e){
   if(e instanceof TypeError)return'通信できませんでした。回線を確認してください。';
   return'失敗しました: '+(e&&e.message?e.message:e);
 }
-async function callClaude(system,user,maxTokens){
+async function apiCall(payload){
   const key=getKey();if(!key)throw new Error('NOKEY');
   const ctrl=new AbortController();const timer=setTimeout(()=>ctrl.abort(),120000);
   try{
     const r=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',signal:ctrl.signal,
       headers:{'content-type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:getModel(),max_tokens:maxTokens,system,messages:[{role:'user',content:user}]})
+      body:JSON.stringify(Object.assign({model:getModel()},payload))
     });
     const j=await r.json().catch(()=>({}));
     if(!r.ok){const e=new Error((j.error&&j.error.message)||('HTTP '+r.status));e.status=r.status;throw e;}
-    return(j.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
+    return j;
   }finally{clearTimeout(timer);}
+}
+function textOf(j){return(j.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');}
+async function callClaude(system,user,maxTokens){
+  const j=await apiCall({max_tokens:maxTokens,system,messages:[{role:'user',content:user}]});
+  return textOf(j);
+}
+/* 分析結果は「ツール呼び出し」の入力として受け取る(文章からJSONを切り出さない) */
+const REVIEW_TOOL={
+  name:'submit_review',
+  description:'レッスンの復習結果を提出する',
+  input_schema:{type:'object',properties:{
+    picks:{type:'array',maxItems:3,items:{type:'object',properties:{
+      tag:{type:'string',enum:TAGS},orig:{type:'string'},fix:{type:'string'},why:{type:'string'},scene:{type:'string'}},
+      required:['tag','orig','fix','why','scene']}},
+    others:{type:'array',items:{type:'object',properties:{orig:{type:'string'},tag:{type:'string'}},required:['orig','tag']}},
+    mishear:{type:'integer'},
+    tag_counts:{type:'object',additionalProperties:{type:'integer'}},
+    next:{type:'object',properties:{tag:{type:'string'},action:{type:'string'},example:{type:'string'}},required:['tag','action','example']}
+  },required:['picks','others','mishear','tag_counts','next']}
+};
+async function callReview(system,user){
+  const j=await apiCall({max_tokens:4000,system,messages:[{role:'user',content:user}],tools:[REVIEW_TOOL],tool_choice:{type:'tool',name:'submit_review'}});
+  if(j.stop_reason==='max_tokens')throw uerr('出力が長すぎて途中で切れました。文字起こしを短くして試してください。');
+  const tu=(j.content||[]).find(b=>b.type==='tool_use');
+  if(tu&&tu.input){
+    if(typeof tu.input==='object')return tu.input;
+    try{return JSON.parse(tu.input);}catch(e){}
+  }
+  const txt=textOf(j);
+  try{return extractJson(txt);}catch(e){
+    throw uerr('AIの返答を読み取れませんでした。返答の冒頭: 「'+txt.slice(0,100).replace(/\s+/g,' ')+'」(stop_reason: '+(j.stop_reason||'?')+')');
+  }
 }
 function extractJson(text){
   const a=text.indexOf('{'),b=text.lastIndexOf('}');
@@ -257,8 +289,7 @@ const SYSTEM_ANALYZE=`あなたは英会話レッスンの復習コーチです�
 6. tag_counts: 要修正の全件(選んだもの+others)のタグ別件数のオブジェクト。
 7. next: 今回最も多かったタグを1つ選び、{tag, action, example}。action は「次のレッスンで、〇〇の型を最低1回使う」の形の日本語1文。example はその型の英語例文1つ。
 
-出力はJSONのみ。前置き、説明、コードブロックは書かない。
-{"picks":[{"tag":"","orig":"","fix":"","why":"","scene":""}],"others":[{"orig":"","tag":""}],"mishear":0,"tag_counts":{},"next":{"tag":"","action":"","example":""}}`.replace('${TAGS}',TAGS.join(' / '));
+結果は submit_review ツールで提出してください。文章での返答は不要です。`.replace('${TAGS}',TAGS.join(' / '));
 
 function clean(s,n){return String(s==null?'':s).trim().slice(0,n);}
 function normalizeResult(j){
@@ -273,8 +304,8 @@ function normalizeResult(j){
 async function analyzeTranscript(text,date){
   const h=hash(text.trim());
   if(state.analyzed.includes(date+':'+h))throw uerr('同じ日の同じ文字起こしは分析済みです。');
-  const raw=await callClaude(SYSTEM_ANALYZE,'レッスン日: '+date+'\n<transcript>\n'+text.trim()+'\n</transcript>',2500);
-  const r=normalizeResult(extractJson(raw));
+  const raw=await callReview(SYSTEM_ANALYZE,'レッスン日: '+date+'\n<transcript>\n'+text.trim()+'\n</transcript>');
+  const r=normalizeResult(raw);
   const list=r.picks.map(p=>({date,tag:p.tag,orig:p.orig,fix:p.fix,why:p.why,scene:p.scene}));
   const res=addEntries(list);
   const c=state.counts[date]=state.counts[date]||{};
