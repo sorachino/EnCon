@@ -100,6 +100,23 @@ pre{white-space:pre-wrap;background:#fff;border:1px solid var(--line);border-rad
 .speak-row button{min-height:38px;font-size:.8rem;padding:4px 14px;background:#fff}
 .prev{font-size:.8rem;color:var(--ink-soft);margin:0 0 8px}
 .edit{margin:0 0 10px;padding:12px;background:#fff;border:1px dashed var(--gold);border-radius:8px}
+.bar-btn{display:block;width:100%;text-align:left;background:none;border:none;padding:6px 0;min-height:44px;color:inherit;font:inherit;font-weight:400}
+.bar-btn .top2{display:flex;justify-content:space-between;align-items:baseline;font-size:.88rem;font-weight:700;margin-bottom:4px}
+.bar-btn .top2 small{font-family:var(--mono);font-weight:400;color:var(--ink-soft);font-size:.72rem}
+.bar-btn .track{display:block}.bar-btn .fill{display:block}
+.chev{color:var(--gold);font-size:.8rem}
+.chips{display:flex;gap:8px;margin:0 0 10px}
+.chips button{min-height:36px;padding:4px 14px;font-size:.82rem;background:#fff}
+.chips button[aria-pressed=true]{background:var(--navy);border-color:var(--navy);color:#fff}
+.tag-list{margin:6px 0 10px;padding:4px 12px;background:#fff;border:1px solid var(--line);border-radius:8px}
+.mi{padding:10px 0;border-top:1px dashed var(--line)}
+.mi:first-child{border-top:none}
+.mi .d{font-family:var(--mono);font-size:.7rem;color:var(--ink-soft);margin-bottom:2px}
+.mi .o{color:var(--ink-soft)}
+.mi .f{font-weight:500;margin-top:2px}
+.mi .w{font-size:.8rem;color:var(--ink-soft);margin-top:4px}
+.rm{color:var(--hanko);font-weight:700;text-decoration:underline;text-decoration-color:var(--hanko)}
+.ad{background:rgba(199,154,61,.4);padding:0 2px;border-radius:2px}
 #toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);
   background:var(--navy);color:#fff;padding:9px 18px;border-radius:999px;font-size:.85rem;font-weight:700;opacity:0;pointer-events:none;transition:opacity .2s;z-index:30;max-width:90vw;text-align:center}
 #toast.show{opacity:1}
@@ -148,11 +165,12 @@ let onlyOpen=true;
 let busy=false;
 let notice={text:'',warn:false};
 let editId=null,editText='',editBusy=false,editMsg='';
+let statsOpen=new Set(),statsRange='7';
 
 function load(){
   try{const s=JSON.parse(localStorage.getItem(KEY));
-    if(s&&Array.isArray(s.entries))return{entries:s.entries,counts:s.counts||{},analyzed:s.analyzed||[],weekly:s.weekly||{},lastResult:s.lastResult||null};}catch(e){}
-  return{entries:[],counts:{},analyzed:[],weekly:{},lastResult:null};
+    if(s&&Array.isArray(s.entries))return{entries:s.entries,counts:s.counts||{},analyzed:s.analyzed||[],weekly:s.weekly||{},lastResult:s.lastResult||null,others:s.others||[]};}catch(e){}
+  return{entries:[],counts:{},analyzed:[],weekly:{},lastResult:null,others:[]};
 }
 function save(){try{localStorage.setItem(KEY,JSON.stringify(state));return true;}catch(e){toast('保存できませんでした');return false;}}
 function getKey(){try{return localStorage.getItem(KEY_API)||'';}catch(e){return'';}}
@@ -352,6 +370,10 @@ async function analyzeTranscript(text,date){
   const res=addEntries(list);
   const c=state.counts[date]=state.counts[date]||{};
   for(const k in r.counts)c[k]=(c[k]||0)+r.counts[k];
+  state.others=state.others||[];
+  const haveO=new Set(state.others.map(o=>o.date+'|'+o.orig));
+  for(const o of r.others){if(!haveO.has(date+'|'+o.orig)){state.others.push({date,tag:o.tag,orig:o.orig});haveO.add(date+'|'+o.orig);}}
+  if(state.others.length>500)state.others=state.others.slice(-500);
   state.analyzed.push(date+':'+h);
   state.lastResult={date,added:res.added,dup:res.dup,others:r.others,mishear:r.mishear,next:r.next};
   save();
@@ -565,33 +587,75 @@ function viewDrill(){
   return html;
 }
 
+function tokens(t){return t.split(/\s+/).filter(Boolean);}
+function normTok(t){return t.toLowerCase().replace(/^[^\w']+|[^\w']+$/g,'');}
+/* 元の文と直し文を単語単位で比べ、変わった単語に印を付ける */
+function diffHtml(orig,fix){
+  const a=tokens(orig),b=tokens(fix),n=a.length,m=b.length;
+  const wrap=(arr,flags,cls)=>arr.map((t,k)=>flags&&flags[k]?'<span class="'+cls+'">'+esc(t)+'</span>':esc(t)).join(' ');
+  if(!n||!m||n*m>40000)return{o:esc(orig),f:esc(fix)};
+  const L=Array.from({length:n+1},()=>new Array(m+1).fill(0));
+  for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)L[i][j]=normTok(a[i])===normTok(b[j])?L[i+1][j+1]+1:Math.max(L[i+1][j],L[i][j+1]);
+  const ra=new Array(n).fill(true),rb=new Array(m).fill(true);
+  let i=0,j=0;
+  while(i<n&&j<m){
+    if(normTok(a[i])===normTok(b[j])){ra[i]=false;rb[j]=false;i++;j++;}
+    else if(L[i+1][j]>=L[i][j+1])i++;else j++;
+  }
+  return{o:wrap(a,ra,'rm'),f:wrap(b,rb,'ad')};
+}
+function tagList(tag,from,to){
+  const items=[];
+  for(const e of state.entries)if(e.tag===tag&&e.date>=from&&e.date<=to)items.push({date:e.date,orig:e.orig,fix:e.fix,why:e.why});
+  for(const o of(state.others||[]))if(o.tag===tag&&o.date>=from&&o.date<=to)items.push({date:o.date,orig:o.orig});
+  items.sort((x,y)=>x.date<y.date?1:x.date>y.date?-1:0);
+  if(!items.length)return'<div class="tag-list"><p class="hint" style="margin:0">この期間に記録された文がありません。</p></div>';
+  return'<div class="tag-list">'+items.map(it=>{
+    if(it.fix){
+      const d=diffHtml(it.orig,it.fix);
+      return'<div class="mi"><div class="d">'+esc(niceDate(it.date))+'</div><div class="o">'+d.o+'</div><div class="f">→ '+d.f+'</div>'+(it.why?'<div class="w">'+esc(it.why)+'</div>':'')+'</div>';
+    }
+    return'<div class="mi"><div class="d">'+esc(niceDate(it.date))+' ・ ドリル対象外</div><div class="o">'+esc(it.orig)+'</div></div>';
+  }).join('')+'</div>';
+}
 function viewStats(){
-  const today=todayStr();
-  const t7=tally(addDays(today,-6),today),p7=tally(addDays(today,-13),addDays(today,-7));
-  const rows=Object.entries(t7).sort((a,b)=>b[1]-a[1]);
-  const inWeek=state.entries.filter(e=>e.date>=addDays(today,-6)&&e.date<=today);
+  const today=todayStr(),from7=addDays(today,-6);
+  const t7=tally(from7,today),p7=tally(addDays(today,-13),addDays(today,-7));
+  const rows7=Object.entries(t7).sort((a,b)=>b[1]-a[1]);
+  const inWeek=state.entries.filter(e=>e.date>=from7&&e.date<=today);
   const done=inWeek.filter(e=>e.said&&e.wrote&&e.used).length;
   let html=`<h2>直近7日</h2>
-    <div class="stat"><div class="panel"><b>${rows.reduce((s,r)=>s+r[1],0)}</b><span>ミスの件数</span></div>
+    <div class="stat"><div class="panel"><b>${rows7.reduce((s,r)=>s+r[1],0)}</b><span>ミスの件数</span></div>
     <div class="panel"><b>${inWeek.length?done+'/'+inWeek.length:'-'}</b><span>ドリル完了</span></div></div>`;
-  if(!rows.length)return html+`<div class="empty">この7日間の記録がありません。</div>`;
-  const[topTag,topN]=rows[0];
-  const ex=state.entries.filter(e=>e.tag===topTag).sort((a,b)=>a.date<b.date?1:-1).slice(0,3);
-  const wk=state.weekly[topTag+'@'+today];
-  html+=`<h2>来週の重点</h2><div class="panel focus"><h3>${esc(topTag)}</h3>
+  if(rows7.length){
+    const[topTag,topN]=rows7[0];
+    const ex=state.entries.filter(e=>e.tag===topTag).sort((a,b)=>a.date<b.date?1:-1).slice(0,3);
+    const wk=state.weekly[topTag+'@'+today];
+    html+=`<h2>来週の重点</h2><div class="panel focus"><h3>${esc(topTag)}</h3>
     <p>直近7日で${topN}件。次のレッスンで、この型を最低1回使ってください。</p>
     ${ex.map(e=>`<div class="ex"><s>${esc(e.orig)}</s><br>${esc(e.fix)}</div>`).join('')}
     ${wk?`<div class="plain">${esc(wk)}</div>`:''}
     <div style="margin-top:12px"><button data-act="weekly" ${busy||!getKey()||!ex.length?'disabled':''}>${busy?'分析中…':(wk?'AI分析をやり直す':'AIで崩れ方と練習を出す')}</button></div>
     ${notice.text&&tab==='stats'?`<div class="msg ${notice.warn?'warn':''}">${esc(notice.text)}</div>`:''}
   </div>`;
-  html+=`<h2>タグ別</h2><div class="panel bars">`;
-  for(const[k,n]of rows){
-    const p=p7[k]||0;
-    html+=`<div class="bar"><div class="top2"><span>${esc(k)}</span><small>${n}件(その前の7日: ${p}件)</small></div>
-      <div class="track"><div class="fill" style="width:${Math.round(n/topN*100)}%"></div></div></div>`;
   }
-  html+=`</div>`;
+  const fromR=statsRange==='7'?from7:'0000-01-01';
+  const tR=statsRange==='7'?t7:tally(fromR,today);
+  const rows=Object.entries(tR).sort((a,b)=>b[1]-a[1]);
+  html+=`<h2>タグ別</h2>
+    <div class="chips"><button data-act="range" data-r="7" aria-pressed="${statsRange==='7'}">直近7日</button><button data-act="range" data-r="all" aria-pressed="${statsRange==='all'}">全期間</button></div>`;
+  if(!rows.length)return html+`<div class="empty">この期間の記録がありません。</div>`;
+  const topN=rows[0][1];
+  html+=`<div class="panel bars">`;
+  for(const[k,n]of rows){
+    const open=statsOpen.has(k);
+    const note=statsRange==='7'?n+'件(その前の7日: '+(p7[k]||0)+'件)':n+'件';
+    html+=`<div class="bar"><button class="bar-btn" data-act="tagtoggle" data-tag="${esc(k)}" aria-expanded="${open}">
+      <span class="top2"><span>${esc(k)} <span class="chev">${open?'▴':'▾'}</span></span><small>${note}</small></span>
+      <span class="track"><span class="fill" style="width:${Math.round(n/topN*100)}%"></span></span></button>
+      ${open?tagList(k,fromR,today):''}</div>`;
+  }
+  html+=`</div><p class="hint">タグを押すと、そのタグのミスの一覧が開きます。赤が元の文で直した単語、金色が直し文で変わった単語です。件数は、レッスンで見つかった要修正の総数です。</p>`;
   const unknown=rows.filter(r=>!TAGS.includes(r[0]));
   if(unknown.length)html+=`<p class="hint">決められたタグ以外が含まれています: ${esc(unknown.map(r=>r[0]).join('、'))}</p>`;
   return html;
@@ -698,6 +762,10 @@ async function onClick(ev){
       save();editBusy=false;editId=null;editMsg='';render();
       toast('直し文を作り直しました(チェックはリセット)');
     }catch(err){editBusy=false;editMsg=errMsg(err);render();}
+  }else if(act==='tagtoggle'){
+    const t=b.dataset.tag;if(statsOpen.has(t))statsOpen.delete(t);else statsOpen.add(t);render();
+  }else if(act==='range'){
+    statsRange=b.dataset.r==='all'?'all':'7';render();
   }else if(act==='addlog'){
     const p=parseLog(document.getElementById('log').value,todayStr());
     if(!p.entries.length&&!Object.keys(p.counts).length){toast('読み取れる行がありませんでした');return;}
@@ -741,7 +809,7 @@ async function onClick(ev){
       const s=JSON.parse(document.getElementById('import').value);
       if(!s||!Array.isArray(s.entries))throw 0;
       if(!confirm('現在のデータを置き換えます。よろしいですか?'))return;
-      state={entries:s.entries,counts:s.counts||{},analyzed:s.analyzed||[],weekly:s.weekly||{},lastResult:s.lastResult||null};
+      state={entries:s.entries,counts:s.counts||{},analyzed:s.analyzed||[],weekly:s.weekly||{},lastResult:s.lastResult||null,others:s.others||[]};
       const kn=applyKeys(s.keys);
       save();go('drill');toast(kn?'キーも読み込みました':'読み込みました');
     }catch(e){toast('読み込めませんでした。形式を確認してください');}
