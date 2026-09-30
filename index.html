@@ -8,6 +8,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <title>EnCon｜英会話ミスログ</title>
 <style>
 :root{
@@ -127,6 +129,16 @@ pre{white-space:pre-wrap;background:#fff;border:1px solid var(--line);border-rad
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script>
+/* 句動詞ノートと同じFirebaseプロジェクト。tts_usage/年-月 の文字数だけを読み書きして、使用量を共有する */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBqRmq3K9VZJWTpZlWpNFMIaUF8LJp1IvQ",
+  authDomain: "english-word-83c2a.firebaseapp.com",
+  databaseURL: "https://english-word-83c2a-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "english-word-83c2a",
+  storageBucket: "english-word-83c2a.firebasestorage.app",
+  messagingSenderId: "515435517015",
+  appId: "1:515435517015:web:0675c37cbe4958e5e57f12"
+};
 const TAGS=['時制','冠詞・名詞の数','語順','助動詞・be動詞の欠落','主語・目的語の脱落','前置詞','複雑構文','語彙選択','流れの破綻','誤変換'];
 const KEY='encon.v1',KEY_API='encon.apikey',KEY_MODEL='encon.model';
 const DEFAULT_MODEL='claude-sonnet-5-5';
@@ -390,8 +402,35 @@ function getTtsKey(){return lsGet(KEY_TTS);}
 function getVoiceName(){return lsGet(KEY_VOICE)||'en-US-Neural2-C';}
 function monthKey(){const n=new Date();return n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0');}
 function getUsage(){try{const u=JSON.parse(localStorage.getItem(KEY_TTSUSE));if(u&&u.m===monthKey())return u.n||0;}catch(e){}return 0;}
-function addUsage(n){try{localStorage.setItem(KEY_TTSUSE,JSON.stringify({m:monthKey(),n:getUsage()+n}));}catch(e){}}
-function cloudActive(){return!!getTtsKey()&&getVoiceName()!=='__web__'&&getUsage()<TTS_FREE_LIMIT*TTS_THRESHOLD;}
+let fbDB=null,sharedUsage=null;
+function initFirebase(){
+  if(fbDB)return fbDB;
+  try{
+    if(typeof firebase==='undefined'||typeof FIREBASE_CONFIG==='undefined'||!FIREBASE_CONFIG.databaseURL)return null;
+    if(!firebase.apps.length)firebase.initializeApp(FIREBASE_CONFIG);
+    fbDB=firebase.database();
+  }catch(e){fbDB=null;}
+  return fbDB;
+}
+function currentUsage(){return sharedUsage!==null?sharedUsage:getUsage();}
+function usageNote(){
+  const n=currentUsage();
+  return'今月の無料枠使用量: '+Math.min(100,Math.round(100*n/TTS_FREE_LIMIT))+'%('+n.toLocaleString()+'文字)。'+
+    (sharedUsage!==null?'句動詞ノートと共有のカウンターです。':'共有カウンターに接続できないため、このアプリの端末内の集計です。')+
+    '85%に達すると、標準の音声に自動で切り替わります。';
+}
+function refreshUsageNote(){const el=document.getElementById('tts-usage');if(el)el.textContent=usageNote();}
+function loadSharedUsage(){
+  const db=initFirebase();if(!db)return;
+  try{db.ref('tts_usage/'+monthKey()).get().then(snap=>{sharedUsage=snap.val()||0;refreshUsageNote();}).catch(()=>{});}catch(e){}
+}
+function addUsage(n){
+  try{localStorage.setItem(KEY_TTSUSE,JSON.stringify({m:monthKey(),n:getUsage()+n}));}catch(e){}
+  if(sharedUsage!==null)sharedUsage+=n;
+  const db=initFirebase();
+  if(db){try{db.ref('tts_usage/'+monthKey()).set(firebase.database.ServerValue.increment(n)).catch(()=>{});}catch(e){}}
+}
+function cloudActive(){return!!getTtsKey()&&getVoiceName()!=='__web__'&&currentUsage()<TTS_FREE_LIMIT*TTS_THRESHOLD;}
 function stopAudio(){
   if(currentAudio){try{currentAudio.pause();}catch(e){}currentAudio=null;}
   try{if(window.speechSynthesis)window.speechSynthesis.cancel();}catch(e){}
@@ -558,11 +597,11 @@ function viewSettings(){
     <label for="voice-select" style="margin-top:14px">声</label>
     <select id="voice-select">${CLOUD_VOICES.map(v=>`<option value="${v.name}" ${getVoiceName()===v.name?'selected':''}>${esc(v.label)}</option>`).join('')}<option value="__web__" ${getVoiceName()==='__web__'?'selected':''}>ブラウザ標準(無料)</option></select>
     <div style="margin-top:10px"><button data-act="testvoice">サンプルを再生</button></div>
-    <p class="hint">今月の使用量(このアプリ分): ${getUsage().toLocaleString()}文字(${Math.min(100,Math.round(100*getUsage()/TTS_FREE_LIMIT))}%)。無料枠100万文字の85%に達すると、標準の音声に自動で切り替わります。</p>
+    <p class="hint" id="tts-usage">${usageNote()}</p>
     <details><summary>安全に使うために</summary>
       <p class="hint">キーは、この端末のブラウザ内にだけ保存され、リポジトリには載りません。</p>
       <p class="hint">Google Cloud Consoleで、キーの制限を設定してください。「アプリケーションの制限」を「ウェブサイト(HTTPリファラー)」にして <b>sorachino.github.io/*</b> だけを許可し、「API の制限」を Cloud Text-to-Speech API だけにします。</p>
-      <p class="hint">使用量はこのアプリの端末内の集計です。同じキーを他のアプリでも使っていると、合算した実際の使用量とは一致しません。</p>
+      <p class="hint">使用量は、句動詞ノートと同じデータベース(tts_usage)に文字数だけを書き込んで共有しています。このキーを、この2つ以外のアプリでも使っている場合は、その分は数えられません。</p>
     </details>
   </div>
   <h2>バックアップ</h2><div class="panel">
@@ -582,7 +621,7 @@ function render(){
   const v=document.getElementById('view');
   v.innerHTML=tab==='analyze'?viewAnalyze():tab==='drill'?viewDrill():tab==='stats'?viewStats():viewSettings();
 }
-function go(t){tab=t;setNotice('',false);render();if(window.scrollTo)try{window.scrollTo(0,0);}catch(e){}}
+function go(t){tab=t;setNotice('',false);render();if(t==='settings')loadSharedUsage();if(window.scrollTo)try{window.scrollTo(0,0);}catch(e){}}
 
 async function onClick(ev){
   const b=ev.target.closest('button');if(!b)return;
@@ -654,7 +693,7 @@ async function onClick(ev){
     const v=(document.getElementById('ttskey').value||'').trim();
     if(!v.startsWith('AIza')){toast('キーの形式が違うようです(AIzaで始まります)');return;}
     try{localStorage.setItem(KEY_TTS,v);}catch(e){toast('保存できませんでした');return;}
-    render();toast('保存しました');
+    render();loadSharedUsage();toast('保存しました');
   }else if(act==='delttskey'){
     try{localStorage.removeItem(KEY_TTS);}catch(e){}
     Object.keys(ttsCache).forEach(k=>delete ttsCache[k]);render();toast('キーを削除しました');
@@ -694,6 +733,7 @@ function init(){
   document.addEventListener('input',ev=>{if(ev.target&&ev.target.id==='edit-text')editText=ev.target.value;});
   tab=state.entries.length?'drill':(getKey()?'analyze':'settings');
   render();
+  if(getTtsKey()||tab==='settings')loadSharedUsage();
 }
 if(typeof document!=='undefined')init();
 
