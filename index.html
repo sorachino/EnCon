@@ -464,6 +464,31 @@ function speakBtns(id,text){
   const a=id?'data-id="'+id+'"':'data-text="'+esc(text)+'"';
   return`<button data-act="speak" ${a} data-rate="1">🔊 再生</button><button data-act="speak" ${a} data-rate="0.6">🐢 ゆっくり</button>`;
 }
+function copyText(str,okMsg){
+  (navigator.clipboard?navigator.clipboard.writeText(str):Promise.reject()).then(()=>toast(okMsg)).catch(()=>{
+    const ta=document.createElement('textarea');ta.value=str;document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy');toast(okMsg);}catch(e){toast('コピーできませんでした');}ta.remove();
+  });
+}
+function isStandalone(){
+  try{return window.navigator.standalone===true||(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches);}catch(e){return false;}
+}
+function collectKeys(){
+  const k={};
+  const a=getKey(),m=lsGet(KEY_MODEL),t=getTtsKey(),v=lsGet(KEY_VOICE);
+  if(a)k.anthropic=a;if(m)k.model=m;if(t)k.tts=t;if(v)k.voice=v;
+  return k;
+}
+function applyKeys(k){
+  let n=0;
+  try{
+    if(k&&typeof k.anthropic==='string'&&k.anthropic.startsWith('sk-ant-')){localStorage.setItem(KEY_API,k.anthropic);n++;}
+    if(k&&typeof k.model==='string'&&k.model){localStorage.setItem(KEY_MODEL,k.model);n++;}
+    if(k&&typeof k.tts==='string'&&k.tts.startsWith('AIza')){localStorage.setItem(KEY_TTS,k.tts);n++;}
+    if(k&&typeof k.voice==='string'&&k.voice){localStorage.setItem(KEY_VOICE,k.voice);n++;}
+  }catch(e){}
+  return n;
+}
 function toast(s){
   const el=document.getElementById('toast');el.textContent=s;el.classList.add('show');
   clearTimeout(toast.t);toast.t=setTimeout(()=>el.classList.remove('show'),2200);
@@ -475,7 +500,7 @@ function viewAnalyze(){
   const hasKey=!!getKey();
   const ex='9/30 | 時制 | I go to the office yesterday. → I went to the office yesterday.\n今日のタグ件数: 時制 2 / 冠詞・名詞の数 1';
   let html=`<h2>レッスンの文字起こしを分析</h2><div class="panel">
-    ${hasKey?'':`<p class="hint" style="margin:0 0 10px;color:var(--miss)">先に「設定」タブでAPIキーを入れてください。</p>`}
+    ${hasKey?'':`<p class="hint" style="margin:0 0 10px;color:var(--hanko)">先に「設定」タブでAPIキーを入れてください。</p>`}
     <label for="tr">文字起こしを貼る</label>
     <textarea id="tr" style="min-height:220px" placeholder="レッスンの文字起こしをここに貼る"></textarea>
     <div class="row">
@@ -575,7 +600,7 @@ function viewStats(){
 function viewSettings(){
   const k=getKey();
   return`<h2>APIキー</h2><div class="panel">
-    <p style="margin:0 0 10px;font-size:.9rem;color:var(--muted)">${k?'保存済み: sk-ant-…'+esc(k.slice(-4)):'まだ保存されていません。'}</p>
+    <p style="margin:0 0 10px;font-size:.9rem;color:var(--ink-soft)">${k?'保存済み: sk-ant-…'+esc(k.slice(-4)):'まだ保存されていません。'}</p>
     <label for="key">Anthropic APIキー(sk-ant-で始まるもの)</label>
     <input id="key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-ant-...">
     <div style="margin-top:10px;display:flex;gap:8px"><button class="primary" data-act="savekey">保存する</button>${k?'<button data-act="delkey">キーを削除</button>':''}</div>
@@ -604,9 +629,12 @@ function viewSettings(){
       <p class="hint">使用量は、句動詞ノートと同じデータベース(tts_usage)に文字数だけを書き込んで共有しています。このキーを、この2つ以外のアプリでも使っている場合は、その分は数えられません。</p>
     </details>
   </div>
-  <h2>バックアップ</h2><div class="panel">
-    <p style="margin:0 0 10px;font-size:.9rem;color:var(--muted)">記録はこの端末のブラウザ内だけに保存されます(APIキーは含まれません)。ブラウザのデータを消したり端末を変えたりすると失われるので、ときどきコピーしてメモに残してください。</p>
-    <button data-act="export">全データをコピー</button>
+  <h2>バックアップと引っ越し</h2><div class="panel">
+    <p style="margin:0 0 10px;font-size:.9rem"><b>今の画面: ${isStandalone()?'ホーム画面から開いたアプリ':'Safari(ブラウザ)'}</b></p>
+    <p class="hint" style="margin:0 0 10px">iPhoneでは、ホーム画面のアイコンから開くアプリと、Safariで開くページとで、保存領域が別です。片方で入れたキーや記録は、もう片方には出ません。アイコンで使うなら、アイコンから開いた画面で一度設定してください。Safariで入れ済みなら、下の「キーも含めてコピー」を使うと、貼り付けだけで移せます。</p>
+    <p style="margin:0 0 10px;font-size:.9rem;color:var(--ink-soft)">通常のコピーには、記録だけが入ります(キーは含まれません)。ブラウザのデータを消したり端末を変えたりすると失われるので、ときどきコピーしてメモに残してください。</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button data-act="export">全データをコピー</button><button data-act="exportkeys">キーも含めてコピー</button></div>
+    <p class="hint">「キーも含めて」は、APIキーがそのままコピーされます。貼り付けたあと、クリップボードとメモに残った分は削除してください。</p>
     <details><summary>バックアップから読み込む</summary>
       <textarea id="import" style="min-height:90px" placeholder="コピーしたデータを貼る"></textarea>
       <div style="margin-top:8px"><button data-act="import">読み込む(現在のデータは置き換わります)</button></div>
@@ -704,18 +732,18 @@ async function onClick(ev){
     try{if(v&&v!==DEFAULT_MODEL)localStorage.setItem(KEY_MODEL,v);else localStorage.removeItem(KEY_MODEL);}catch(e){}
     render();toast('保存しました');
   }else if(act==='export'){
-    const s=JSON.stringify(state);
-    (navigator.clipboard?navigator.clipboard.writeText(s):Promise.reject()).then(()=>toast('コピーしました')).catch(()=>{
-      const ta=document.createElement('textarea');ta.value=s;document.body.appendChild(ta);ta.select();
-      try{document.execCommand('copy');toast('コピーしました');}catch(e){toast('コピーできませんでした');}ta.remove();
-    });
+    copyText(JSON.stringify(state),'コピーしました');
+  }else if(act==='exportkeys'){
+    const keys=collectKeys();
+    copyText(JSON.stringify(Object.assign({},state,{keys})),Object.keys(keys).length?'キーも含めてコピーしました':'コピーしました(保存済みのキーはありません)');
   }else if(act==='import'){
     try{
       const s=JSON.parse(document.getElementById('import').value);
       if(!s||!Array.isArray(s.entries))throw 0;
       if(!confirm('現在のデータを置き換えます。よろしいですか?'))return;
       state={entries:s.entries,counts:s.counts||{},analyzed:s.analyzed||[],weekly:s.weekly||{},lastResult:s.lastResult||null};
-      save();go('drill');toast('読み込みました');
+      const kn=applyKeys(s.keys);
+      save();go('drill');toast(kn?'キーも読み込みました':'読み込みました');
     }catch(e){toast('読み込めませんでした。形式を確認してください');}
   }
 }
@@ -729,6 +757,7 @@ function init(){
       speak('This is a sample sentence.',1);toast('声を変更しました');
     }
   });
+  try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
   document.addEventListener('click',onClick);
   document.addEventListener('input',ev=>{if(ev.target&&ev.target.id==='edit-text')editText=ev.target.value;});
   tab=state.entries.length?'drill':(getKey()?'analyze':'settings');
