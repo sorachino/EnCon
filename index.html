@@ -46,7 +46,7 @@ h2::before{content:"";display:inline-block;width:4px;height:.95em;background:var
 .card{margin-bottom:14px}
 .card.done{opacity:.55}
 label{display:block;font-size:.8rem;color:var(--ink-soft);margin-bottom:4px;font-weight:700}
-textarea,input[type=date],input[type=text],input[type=password]{width:100%;font:inherit;font-size:16px;color:var(--ink);background:#fff;
+textarea,input[type=date],input[type=text],input[type=password],select{width:100%;font:inherit;font-size:16px;color:var(--ink);background:#fff;
   border:1px solid var(--line);border-radius:6px;padding:10px}
 textarea{min-height:190px;resize:vertical;line-height:1.5}
 .row{display:flex;gap:10px;align-items:end;margin-top:10px}
@@ -366,7 +366,7 @@ function pickVoice(){
     return vs.slice().sort((a,b)=>score(b)-score(a))[0];
   }catch(e){return null;}
 }
-function speak(text,rate){
+function speakWeb(text,rate){
   if(!window.speechSynthesis||typeof SpeechSynthesisUtterance==='undefined'){toast('この端末では音声再生に対応していません');return;}
   const synth=window.speechSynthesis;
   synth.cancel();
@@ -374,6 +374,52 @@ function speak(text,rate){
   u.lang='en-US';u.rate=rate;
   const v=pickVoice();if(v)u.voice=v;
   synth.speak(u);
+}
+/* ---------- Google Cloud Text-to-Speech (Neural2) ---------- */
+const KEY_TTS='encon.ttskey',KEY_VOICE='encon.voice',KEY_TTSUSE='encon.ttsuse';
+const TTS_FREE_LIMIT=1000000,TTS_THRESHOLD=0.85;
+const CLOUD_VOICES=[
+  {name:'en-US-Neural2-C',label:'Neural2-C(女性・標準)'},{name:'en-US-Neural2-F',label:'Neural2-F(女性)'},
+  {name:'en-US-Neural2-G',label:'Neural2-G(女性)'},{name:'en-US-Neural2-H',label:'Neural2-H(女性)'},
+  {name:'en-US-Neural2-A',label:'Neural2-A(男性)'},{name:'en-US-Neural2-D',label:'Neural2-D(男性)'},
+  {name:'en-US-Neural2-I',label:'Neural2-I(男性)'},{name:'en-US-Neural2-J',label:'Neural2-J(男性)'}
+];
+const ttsCache={};let currentAudio=null;
+function lsGet(k){try{return localStorage.getItem(k)||'';}catch(e){return'';}}
+function getTtsKey(){return lsGet(KEY_TTS);}
+function getVoiceName(){return lsGet(KEY_VOICE)||'en-US-Neural2-C';}
+function monthKey(){const n=new Date();return n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0');}
+function getUsage(){try{const u=JSON.parse(localStorage.getItem(KEY_TTSUSE));if(u&&u.m===monthKey())return u.n||0;}catch(e){}return 0;}
+function addUsage(n){try{localStorage.setItem(KEY_TTSUSE,JSON.stringify({m:monthKey(),n:getUsage()+n}));}catch(e){}}
+function cloudActive(){return!!getTtsKey()&&getVoiceName()!=='__web__'&&getUsage()<TTS_FREE_LIMIT*TTS_THRESHOLD;}
+function stopAudio(){
+  if(currentAudio){try{currentAudio.pause();}catch(e){}currentAudio=null;}
+  try{if(window.speechSynthesis)window.speechSynthesis.cancel();}catch(e){}
+}
+function playB64(b64){
+  const a=new Audio('data:audio/mp3;base64,'+b64);
+  currentAudio=a;a.onended=()=>{if(currentAudio===a)currentAudio=null;};
+  return a.play();
+}
+async function speakCloud(text,rate){
+  const voice=getVoiceName(),ck=voice+'|'+rate+'|'+text;
+  const tryPlay=async b64=>{try{await playB64(b64);}catch(e){toast('もう一度タップすると再生します(準備できました)');}};
+  if(ttsCache[ck]){await tryPlay(ttsCache[ck]);return;}
+  try{
+    const res=await fetch('https://texttospeech.googleapis.com/v1/text:synthesize?key='+encodeURIComponent(getTtsKey()),{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({input:{text},voice:{languageCode:'en-US',name:voice},audioConfig:{audioEncoding:'MP3',speakingRate:rate}})
+    });
+    const data=await res.json().catch(()=>({}));
+    if(data.audioContent){ttsCache[ck]=data.audioContent;addUsage(text.length);await tryPlay(data.audioContent);return;}
+    const msg=(data.error&&data.error.message)||('HTTP '+res.status);
+    toast('Cloud読み上げに失敗: '+String(msg).slice(0,60));
+  }catch(e){toast('通信できませんでした。標準の音声で再生します');}
+  speakWeb(text,rate);
+}
+function speak(text,rate){
+  stopAudio();
+  if(cloudActive())speakCloud(text,rate);else speakWeb(text,rate);
 }
 function speakBtns(id,text){
   const a=id?'data-id="'+id+'"':'data-text="'+esc(text)+'"';
@@ -504,6 +550,21 @@ function viewSettings(){
     <input id="model" type="text" value="${esc(getModel())}" autocapitalize="off" spellcheck="false">
     <div style="margin-top:10px"><button data-act="savemodel">保存する</button></div>
   </div>
+  <h2>読み上げ音声</h2><div class="panel">
+    <p style="margin:0 0 10px;font-size:.9rem;color:var(--ink-soft)">${getTtsKey()?'Google Cloud Text-to-Speech: キー保存済み(…'+esc(getTtsKey().slice(-4))+')':'キー未設定です。ブラウザ標準の音声を使っています。'}</p>
+    <label for="ttskey">Google Cloud APIキー(Text-to-Speech用)</label>
+    <input id="ttskey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza...">
+    <div style="margin-top:10px;display:flex;gap:8px"><button class="primary" data-act="savettskey">保存する</button>${getTtsKey()?'<button data-act="delttskey">キーを削除</button>':''}</div>
+    <label for="voice-select" style="margin-top:14px">声</label>
+    <select id="voice-select">${CLOUD_VOICES.map(v=>`<option value="${v.name}" ${getVoiceName()===v.name?'selected':''}>${esc(v.label)}</option>`).join('')}<option value="__web__" ${getVoiceName()==='__web__'?'selected':''}>ブラウザ標準(無料)</option></select>
+    <div style="margin-top:10px"><button data-act="testvoice">サンプルを再生</button></div>
+    <p class="hint">今月の使用量(このアプリ分): ${getUsage().toLocaleString()}文字(${Math.min(100,Math.round(100*getUsage()/TTS_FREE_LIMIT))}%)。無料枠100万文字の85%に達すると、標準の音声に自動で切り替わります。</p>
+    <details><summary>安全に使うために</summary>
+      <p class="hint">キーは、この端末のブラウザ内にだけ保存され、リポジトリには載りません。</p>
+      <p class="hint">Google Cloud Consoleで、キーの制限を設定してください。「アプリケーションの制限」を「ウェブサイト(HTTPリファラー)」にして <b>sorachino.github.io/*</b> だけを許可し、「API の制限」を Cloud Text-to-Speech API だけにします。</p>
+      <p class="hint">使用量はこのアプリの端末内の集計です。同じキーを他のアプリでも使っていると、合算した実際の使用量とは一致しません。</p>
+    </details>
+  </div>
   <h2>バックアップ</h2><div class="panel">
     <p style="margin:0 0 10px;font-size:.9rem;color:var(--muted)">記録はこの端末のブラウザ内だけに保存されます(APIキーは含まれません)。ブラウザのデータを消したり端末を変えたりすると失われるので、ときどきコピーしてメモに残してください。</p>
     <button data-act="export">全データをコピー</button>
@@ -589,6 +650,16 @@ async function onClick(ev){
   }else if(act==='delkey'){
     try{localStorage.removeItem(KEY_API);}catch(e){}
     render();toast('キーを削除しました');
+  }else if(act==='savettskey'){
+    const v=(document.getElementById('ttskey').value||'').trim();
+    if(!v.startsWith('AIza')){toast('キーの形式が違うようです(AIzaで始まります)');return;}
+    try{localStorage.setItem(KEY_TTS,v);}catch(e){toast('保存できませんでした');return;}
+    render();toast('保存しました');
+  }else if(act==='delttskey'){
+    try{localStorage.removeItem(KEY_TTS);}catch(e){}
+    Object.keys(ttsCache).forEach(k=>delete ttsCache[k]);render();toast('キーを削除しました');
+  }else if(act==='testvoice'){
+    speak('This is a sample sentence.',1);
   }else if(act==='savemodel'){
     const v=(document.getElementById('model').value||'').trim();
     try{if(v&&v!==DEFAULT_MODEL)localStorage.setItem(KEY_MODEL,v);else localStorage.removeItem(KEY_MODEL);}catch(e){}
@@ -612,6 +683,13 @@ async function onClick(ev){
 
 function init(){
   try{if(window.speechSynthesis)window.speechSynthesis.getVoices();}catch(e){}
+  document.addEventListener('change',ev=>{
+    if(ev.target&&ev.target.id==='voice-select'){
+      try{localStorage.setItem(KEY_VOICE,ev.target.value);}catch(e){}
+      Object.keys(ttsCache).forEach(k=>delete ttsCache[k]);
+      speak('This is a sample sentence.',1);toast('声を変更しました');
+    }
+  });
   document.addEventListener('click',onClick);
   document.addEventListener('input',ev=>{if(ev.target&&ev.target.id==='edit-text')editText=ev.target.value;});
   tab=state.entries.length?'drill':(getKey()?'analyze':'settings');
