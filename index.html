@@ -94,6 +94,8 @@ pre{white-space:pre-wrap;background:#fff;border:1px solid var(--line);border-rad
 .stat span{font-size:.7rem;color:var(--ink-soft)}
 .res p{margin:0 0 8px}
 .plain{white-space:pre-wrap;font-size:.9rem;margin:10px 0 0;padding-top:10px;border-top:1px dashed var(--line)}
+.speak-row{display:flex;gap:8px;margin:0 0 10px}
+.speak-row button{min-height:38px;font-size:.8rem;padding:4px 14px;background:#fff}
 .prev{font-size:.8rem;color:var(--ink-soft);margin:0 0 8px}
 .edit{margin:0 0 10px;padding:12px;background:#fff;border:1px dashed var(--gold);border-radius:8px}
 #toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);
@@ -355,6 +357,28 @@ async function analyzeWeekly(tag,examples,total){
   state.weekly[tag+'@'+todayStr()]=clean(txt,1200);save();return txt;
 }
 
+/* ---------- 読み上げ(ブラウザ内蔵の音声合成。通信・課金なし) ---------- */
+function pickVoice(){
+  try{
+    const vs=(window.speechSynthesis.getVoices()||[]).filter(v=>/^en[-_]/i.test(v.lang)||/^en$/i.test(v.lang));
+    if(!vs.length)return null;
+    const score=v=>(/en[-_]US/i.test(v.lang)?4:0)+(/premium|enhanced|natural|siri/i.test(v.name)?3:0)+(/samantha|google us english|ava|allison|nicky/i.test(v.name)?2:0)+(v.localService?1:0);
+    return vs.slice().sort((a,b)=>score(b)-score(a))[0];
+  }catch(e){return null;}
+}
+function speak(text,rate){
+  if(!window.speechSynthesis||typeof SpeechSynthesisUtterance==='undefined'){toast('この端末では音声再生に対応していません');return;}
+  const synth=window.speechSynthesis;
+  synth.cancel();
+  const u=new SpeechSynthesisUtterance(text);
+  u.lang='en-US';u.rate=rate;
+  const v=pickVoice();if(v)u.voice=v;
+  synth.speak(u);
+}
+function speakBtns(id,text){
+  const a=id?'data-id="'+id+'"':'data-text="'+esc(text)+'"';
+  return`<button data-act="speak" ${a} data-rate="1">🔊 再生</button><button data-act="speak" ${a} data-rate="0.6">🐢 ゆっくり</button>`;
+}
 function toast(s){
   const el=document.getElementById('toast');el.textContent=s;el.classList.add('show');
   clearTimeout(toast.t);toast.t=setTimeout(()=>el.classList.remove('show'),2200);
@@ -380,7 +404,7 @@ function viewAnalyze(){
   if(r){
     html+=`<h2>直近の結果(${esc(niceDate(r.date))})</h2><div class="panel res">
       <p>ドリルに${r.added}件追加${r.dup?`(重複${r.dup}件はスキップ)`:''}。<button class="quiet" data-tab="drill">ドリルを開く</button></p>`;
-    if(r.next&&r.next.tag)html+=`<p><b>次のレッスンで意識すること</b><br>${esc(r.next.tag)}: ${esc(r.next.action)}</p>${r.next.example?`<div class="ex">${esc(r.next.example)}</div>`:''}`;
+    if(r.next&&r.next.tag)html+=`<p><b>次のレッスンで意識すること</b><br>${esc(r.next.tag)}: ${esc(r.next.action)}</p>${r.next.example?`<div class="ex">${esc(r.next.example)}<div class="speak-row" style="margin:6px 0 0">${speakBtns('',r.next.example)}</div></div>`:''}`;
     if(r.others&&r.others.length)html+=`<p style="margin-top:12px"><b>ほかの要修正</b></p>${r.others.map(o=>`<div class="ex"><s>${esc(o.orig)}</s> <span class="tag">${esc(o.tag)}</span></div>`).join('')}`;
     if(r.mishear)html+=`<p class="hint">誤変換の疑い: ${r.mishear}件(集計には含めていません)</p>`;
     html+=`</div>`;
@@ -419,6 +443,7 @@ function viewDrill(){
       <span class="tag">${esc(e.tag)}</span>
       <p class="orig">${esc(e.orig)}</p>
       <p class="fix"><span>${esc(e.fix)}</span></p>
+      <div class="speak-row">${speakBtns(e.id,e.fix)}</div>
       ${e.why?`<p class="why">${esc(e.why)}</p>`:''}
       ${e.scene?`<p class="scene"><b>言ってみる:</b> ${esc(e.scene)}</p>`:''}
       <div class="checks">${btn('said','3回言った')}${btn('wrote','書き写した')}${btn('used','会話で使った')}</div>
@@ -502,6 +527,12 @@ async function onClick(ev){
   const b=ev.target.closest('button');if(!b)return;
   if(b.dataset.tab){go(b.dataset.tab);return;}
   const act=b.dataset.act;if(!act)return;
+  if(act==='speak'){
+    let text=b.dataset.text||'';
+    if(b.dataset.id){const e=state.entries.find(x=>x.id===b.dataset.id);text=e?e.fix:'';}
+    if(text)speak(text,parseFloat(b.dataset.rate)||1);
+    return;
+  }
   if(act==='analyze'){
     if(busy)return;
     const text=(document.getElementById('tr').value||'').trim();
@@ -580,6 +611,7 @@ async function onClick(ev){
 }
 
 function init(){
+  try{if(window.speechSynthesis)window.speechSynthesis.getVoices();}catch(e){}
   document.addEventListener('click',onClick);
   document.addEventListener('input',ev=>{if(ev.target&&ev.target.id==='edit-text')editText=ev.target.value;});
   tab=state.entries.length?'drill':(getKey()?'analyze':'settings');
