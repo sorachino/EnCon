@@ -160,6 +160,16 @@ const FIREBASE_CONFIG = {
   messagingSenderId: "515435517015",
   appId: "1:515435517015:web:0675c37cbe4958e5e57f12"
 };
+/* EnCon専用のFirebaseプロジェクト(同期用)。公開用の設定値で、秘密ではありません。 */
+const ENCON_FIREBASE_CONFIG={
+  apiKey:"",
+  authDomain:"",
+  databaseURL:"",
+  projectId:"",
+  storageBucket:"",
+  messagingSenderId:"",
+  appId:""
+};
 const TAGS=['時制','冠詞・名詞の数','語順','助動詞・be動詞の欠落','主語・目的語の脱落','前置詞','複雑構文','語彙選択','流れの破綻','誤変換'];
 const KEY='encon.v1',KEY_API='encon.apikey',KEY_MODEL='encon.model';
 const DEFAULT_MODEL='claude-sonnet-5-5';
@@ -565,7 +575,7 @@ async function backfillOthers(){
 }
 /* ---------- 端末間の同期 (Firebase: encon_sync/<合言葉>) ---------- */
 const KEY_SYNC='encon.syncid',KEY_DEV='encon.device',KEY_SYNCMETA='encon.syncmeta';
-const FULL_RULES='{\n  "rules": {\n    "users": { ".read": true, ".write": true },\n    "answers": { ".read": true, ".write": true },\n    "tts_usage": { ".read": true, ".write": true },\n    "groupNoteBaseOverride": { ".read": true, ".write": true },\n    "wordGroupExtra": { ".read": true, ".write": true },\n    "groupNoteExtra": { ".read": true, ".write": true },\n    "customGroups": { ".read": true, ".write": true },\n    "encon_sync": {\n      "$syncId": {\n        ".read": "$syncId.length >= 20",\n        ".write": "$syncId.length >= 20"\n      }\n    }\n  }\n}';
+const FULL_RULES='{\n  "rules": {\n    "encon_sync": {\n      "$syncId": {\n        ".read": "$syncId.length >= 20",\n        ".write": "$syncId.length >= 20"\n      }\n    }\n  }\n}';
 let syncBusy=false,syncPending=false,syncTimer=null,syncStatus='',syncWarn=false;
 function getSyncId(){return lsGet(KEY_SYNC);}
 function validSyncId(v){return typeof v==='string'&&/^[A-Za-z0-9_-]{20,64}$/.test(v);}
@@ -579,6 +589,17 @@ function deviceId(){
   let d=lsGet(KEY_DEV);
   if(!d){d='d'+randId(8);try{localStorage.setItem(KEY_DEV,d);}catch(e){}}
   return d;
+}
+let syncDB=null;
+function initSyncDB(){
+  if(syncDB)return syncDB;
+  try{
+    if(typeof firebase==='undefined'||!ENCON_FIREBASE_CONFIG.databaseURL)return null;
+    let app=(firebase.apps||[]).find(a=>a&&a.name==='encon');
+    if(!app)app=firebase.initializeApp(ENCON_FIREBASE_CONFIG,'encon');
+    syncDB=app.database();
+  }catch(e){syncDB=null;}
+  return syncDB;
 }
 function fbKey(x){return String(x).replace(/[.$#\[\]\/\u0000-\u001f\u007f]/g,'_');}
 function clock(ts){const d=new Date(ts);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
@@ -676,7 +697,8 @@ function syncErrMsg(e){
 async function syncNow(){
   const id=getSyncId();if(!id)return;
   if(syncBusy){syncPending=true;return;}
-  const db=initFirebase();
+  if(!ENCON_FIREBASE_CONFIG.databaseURL){setSync('同期できません: 同期用データベースの設定が、このアプリにまだ入っていません。',true);return;}
+  const db=initSyncDB();
   if(!db){setSync('同期できません: Firebaseに接続できません。',true);return;}
   syncBusy=true;setSync('同期中…',false);
   try{
@@ -883,8 +905,8 @@ function syncPanel(){
     <details><summary>安全に使うために・ルールの設定</summary>
       <p class="hint">合言葉を知っている人は、記録を読み書きできます。他人に教えないでください。長い乱数なので、推測はほぼ不可能です。</p>
       <p class="hint">APIキー(AnthropicとGoogle)は同期されません。端末ごとに入れてください。</p>
-      <p class="hint">Firebaseコンソール → Realtime Database → ルール で、今のルールが「全体公開(<b>".read": true</b> と <b>".write": true</b> だけ)」の場合は、下の全文に置き換えて「公開」を押してください。句動詞ノートが使う場所は今までどおり許可し、記録の置き場(encon_sync)だけを、合言葉を知っている人に限ります。</p>
-      <p class="hint">置き換えたあと、句動詞ノートが動くか(ランキングや回答記録)を確認してください。全体公開のままだと、合言葉に関係なく、記録が他人に読めます。</p>
+      <p class="hint">同期は、EnCon専用のFirebaseプロジェクトに保存されます。そのプロジェクトの Realtime Database → ルール に、下の全文を設定して「公開」を押してください。記録の置き場を、合言葉を知っている人だけに限り、データベース全体は読めない設定です。</p>
+      <p class="hint">句動詞ノートのデータベースは使いません(読み上げの無料枠のカウンターだけ共有します)。</p>
       <pre>${esc(rules)}</pre>
       <div><button data-act="copyrules">ルールをコピー</button></div>
     </details></div>`;
