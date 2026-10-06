@@ -565,6 +565,7 @@ async function backfillOthers(){
 }
 /* ---------- 端末間の同期 (Firebase: encon_sync/<合言葉>) ---------- */
 const KEY_SYNC='encon.syncid',KEY_DEV='encon.device',KEY_SYNCMETA='encon.syncmeta';
+const FULL_RULES='{\n  "rules": {\n    "users": { ".read": true, ".write": true },\n    "answers": { ".read": true, ".write": true },\n    "tts_usage": { ".read": true, ".write": true },\n    "groupNoteBaseOverride": { ".read": true, ".write": true },\n    "wordGroupExtra": { ".read": true, ".write": true },\n    "groupNoteExtra": { ".read": true, ".write": true },\n    "customGroups": { ".read": true, ".write": true },\n    "encon_sync": {\n      "$syncId": {\n        ".read": "$syncId.length >= 20",\n        ".write": "$syncId.length >= 20"\n      }\n    }\n  }\n}';
 let syncBusy=false,syncPending=false,syncTimer=null,syncStatus='',syncWarn=false;
 function getSyncId(){return lsGet(KEY_SYNC);}
 function validSyncId(v){return typeof v==='string'&&/^[A-Za-z0-9_-]{20,64}$/.test(v);}
@@ -864,7 +865,7 @@ function viewStats(){
 
 function syncPanel(){
   const id=getSyncId();
-  const rules='{\n  "rules": {\n    "encon_sync": {\n      "$syncId": {\n        ".read": "$syncId.length >= 20",\n        ".write": "$syncId.length >= 20"\n      }\n    }\n  }\n}';
+  const rules=FULL_RULES;
   let body;
   if(!id){
     body=`<p style="margin:0 0 10px;font-size:.9rem;color:var(--ink-soft)">PCとスマホで、同じ記録を使えるようにします。合言葉が鍵になります。</p>
@@ -882,7 +883,8 @@ function syncPanel(){
     <details><summary>安全に使うために・ルールの設定</summary>
       <p class="hint">合言葉を知っている人は、記録を読み書きできます。他人に教えないでください。長い乱数なので、推測はほぼ不可能です。</p>
       <p class="hint">APIキー(AnthropicとGoogle)は同期されません。端末ごとに入れてください。</p>
-      <p class="hint">Firebaseコンソール → Realtime Database → ルール で、既存のルールの中に、次の <b>encon_sync</b> の部分を足してください。ルールの最上位に <b>".read": true</b> のような全体公開の指定があると、記録も他人に読めてしまいます。その場合は、全体公開をやめて、句動詞ノートが使う場所(users、answers、tts_usage、groupNoteBaseOverride、wordGroupExtra、groupNoteExtra、customGroups)だけに許可を付け直してください。</p>
+      <p class="hint">Firebaseコンソール → Realtime Database → ルール で、今のルールが「全体公開(<b>".read": true</b> と <b>".write": true</b> だけ)」の場合は、下の全文に置き換えて「公開」を押してください。句動詞ノートが使う場所は今までどおり許可し、記録の置き場(encon_sync)だけを、合言葉を知っている人に限ります。</p>
+      <p class="hint">置き換えたあと、句動詞ノートが動くか(ランキングや回答記録)を確認してください。全体公開のままだと、合言葉に関係なく、記録が他人に読めます。</p>
       <pre>${esc(rules)}</pre>
       <div><button data-act="copyrules">ルールをコピー</button></div>
     </details></div>`;
@@ -1013,7 +1015,7 @@ async function onClick(ev){
     if(confirm('この端末の同期を切ります(記録は端末に残り、Firebase上の記録も消えません)。よろしいですか?')){
       try{localStorage.removeItem(KEY_SYNC);}catch(e){}setSync('',false);render();toast('同期を切りました');}
   }else if(act==='copyrules'){
-    copyText('{\n  "rules": {\n    "encon_sync": {\n      "$syncId": {\n        ".read": "$syncId.length >= 20",\n        ".write": "$syncId.length >= 20"\n      }\n    }\n  }\n}','ルールをコピーしました');
+    copyText(FULL_RULES,'ルールをコピーしました');
   }else if(act==='tagtoggle'){
     const t=b.dataset.tag;if(statsOpen.has(t))statsOpen.delete(t);else statsOpen.add(t);render();
   }else if(act==='range'){
