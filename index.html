@@ -171,12 +171,20 @@ let notice={text:'',warn:false};
 let editId=null,editText='',editBusy=false,editMsg='';
 let statsOpen=new Set(),statsRange='7';
 
-function load(){
-  try{const s=JSON.parse(localStorage.getItem(KEY));
-    if(s&&Array.isArray(s.entries))return{entries:s.entries,counts:s.counts||{},analyzed:s.analyzed||[],weekly:s.weekly||{},lastResult:s.lastResult||null,others:s.others||[]};}catch(e){}
-  return{entries:[],counts:{},analyzed:[],weekly:{},lastResult:null,others:[]};
+function normState(s){
+  const st={entries:Array.isArray(s.entries)?s.entries:[],counts:s.counts||{},analyzed:s.analyzed||[],weekly:s.weekly||{},lastResult:s.lastResult||null,
+    others:Array.isArray(s.others)?s.others:[],tomb:s.tomb||{},remoteCounts:s.remoteCounts||{},weeklyU:s.weeklyU||{}};
+  st.entries.forEach(e=>{if(typeof e.u!=='number')e.u=0;});
+  const seen=new Set();
+  st.others=st.others.filter(o=>{if(!o.id)o.id=hash(o.date+'|'+o.orig);if(typeof o.u!=='number')o.u=0;if(seen.has(o.id))return false;seen.add(o.id);return true;});
+  return st;
 }
-function save(){try{localStorage.setItem(KEY,JSON.stringify(state));return true;}catch(e){toast('保存できませんでした');return false;}}
+function load(){
+  try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&Array.isArray(s.entries))return normState(s);}catch(e){}
+  return normState({});
+}
+function persist(){try{localStorage.setItem(KEY,JSON.stringify(state));return true;}catch(e){toast('保存できませんでした');return false;}}
+function save(){const ok=persist();scheduleSync();return ok;}
 function getKey(){try{return localStorage.getItem(KEY_API)||'';}catch(e){return'';}}
 function getModel(){try{return localStorage.getItem(KEY_MODEL)||DEFAULT_MODEL;}catch(e){return DEFAULT_MODEL;}}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
@@ -228,7 +236,7 @@ function addEntries(list){
   const have=new Set(state.entries.map(key));
   for(const e of list){
     if(have.has(key(e))){dup++;continue;}
-    state.entries.push({id:uid(),date:e.date,tag:e.tag,orig:e.orig,fix:e.fix,why:e.why||'',scene:e.scene||'',said:false,wrote:false,used:false});
+    state.entries.push({id:uid(),date:e.date,tag:e.tag,orig:e.orig,fix:e.fix,why:e.why||'',scene:e.scene||'',said:false,wrote:false,used:false,u:Date.now()});
     have.add(key(e));added++;
   }
   return{added,dup};
@@ -239,11 +247,19 @@ function addParsed(p){
   return r;
 }
 /* 期間内のタグ別件数。件数がある日はそれを優先し、ない日は記録した文の数で数える */
+function countsFor(d){
+  const own=state.counts[d],rem=(state.remoteCounts||{})[d];
+  if(!own&&!rem)return null;
+  const t={};
+  for(const k in(own||{}))t[k]=(t[k]||0)+(Number(own[k])||0);
+  for(const k in(rem||{}))t[k]=(t[k]||0)+(Number(rem[k])||0);
+  return t;
+}
 function tally(from,to){
   const t={};
-  const withCounts=new Set(Object.keys(state.counts).filter(d=>d>=from&&d<=to));
-  for(const d of withCounts)for(const k in state.counts[d])t[k]=(t[k]||0)+state.counts[d][k];
-  for(const e of state.entries)if(e.date>=from&&e.date<=to&&!withCounts.has(e.date))t[e.tag]=(t[e.tag]||0)+1;
+  const dates=new Set(Object.keys(state.counts).concat(Object.keys(state.remoteCounts||{})).filter(d=>d>=from&&d<=to));
+  for(const d of dates){const c=countsFor(d);for(const k in c)t[k]=(t[k]||0)+c[k];}
+  for(const e of state.entries)if(e.date>=from&&e.date<=to&&!dates.has(e.date))t[e.tag]=(t[e.tag]||0)+1;
   return t;
 }
 
@@ -376,8 +392,7 @@ async function analyzeTranscript(text,date){
   for(const k in r.counts)c[k]=(c[k]||0)+r.counts[k];
   state.others=state.others||[];
   const haveO=new Set(state.others.map(o=>o.date+'|'+o.orig));
-  for(const o of r.others){if(!haveO.has(date+'|'+o.orig)){state.others.push({date,tag:o.tag,orig:o.orig,fix:o.fix||'',why:o.why||''});haveO.add(date+'|'+o.orig);}}
-  if(state.others.length>500)state.others=state.others.slice(-500);
+  for(const o of r.others){if(!haveO.has(date+'|'+o.orig)){state.others.push({id:hash(date+'|'+o.orig),date,tag:o.tag,orig:o.orig,fix:o.fix||'',why:o.why||'',u:Date.now()});haveO.add(date+'|'+o.orig);}}
   state.analyzed.push(date+':'+h);
   state.lastResult={date,added:res.added,dup:res.dup,others:r.others,mishear:r.mishear,next:r.next};
   save();
@@ -392,7 +407,7 @@ const SYSTEM_WEEKLY=`あなたは英会話の復習コーチです。生徒の�
 async function analyzeWeekly(tag,examples,total){
   const body='重点タグ: '+tag+'(直近7日で'+total+'件)\n'+examples.map(e=>'- ['+e.tag+'] '+e.orig+' → '+e.fix).join('\n');
   const txt=await callClaude(SYSTEM_WEEKLY,body,3000);
-  state.weekly[tag+'@'+todayStr()]=clean(txt,1200);save();return txt;
+  const wkKey=tag+'@'+todayStr();state.weekly[wkKey]=clean(txt,1200);state.weeklyU[wkKey]=Date.now();save();return txt;
 }
 
 /* ---------- 読み上げ(ブラウザ内蔵の音声合成。通信・課金なし) ---------- */
@@ -502,7 +517,8 @@ function isStandalone(){
 function collectKeys(){
   const k={};
   const a=getKey(),m=lsGet(KEY_MODEL),t=getTtsKey(),v=lsGet(KEY_VOICE);
-  if(a)k.anthropic=a;if(m)k.model=m;if(t)k.tts=t;if(v)k.voice=v;
+  const sy=getSyncId();
+  if(a)k.anthropic=a;if(m)k.model=m;if(t)k.tts=t;if(v)k.voice=v;if(sy)k.sync=sy;
   return k;
 }
 function applyKeys(k){
@@ -512,6 +528,7 @@ function applyKeys(k){
     if(k&&typeof k.model==='string'&&k.model){localStorage.setItem(KEY_MODEL,k.model);n++;}
     if(k&&typeof k.tts==='string'&&k.tts.startsWith('AIza')){localStorage.setItem(KEY_TTS,k.tts);n++;}
     if(k&&typeof k.voice==='string'&&k.voice){localStorage.setItem(KEY_VOICE,k.voice);n++;}
+    if(k&&validSyncId(k.sync)){localStorage.setItem(KEY_SYNC,k.sync);n++;}
   }catch(e){}
   return n;
 }
@@ -540,11 +557,154 @@ async function backfillOthers(){
     const items=Array.isArray(raw&&raw.items)?raw.items:[];
     for(const it of items){
       const n=parseInt(it.n,10)-1;const fix=clean(it.fix,400);
-      if(chunk[n]&&fix){const t=state.others[chunk[n].i];t.fix=fix;t.why=clean(it.why,300);done++;}
+      if(chunk[n]&&fix){const t=state.others[chunk[n].i];t.fix=fix;t.why=clean(it.why,300);t.u=Date.now();done++;}
     }
     save();
   }
   return done;
+}
+/* ---------- 端末間の同期 (Firebase: encon_sync/<合言葉>) ---------- */
+const KEY_SYNC='encon.syncid',KEY_DEV='encon.device',KEY_SYNCMETA='encon.syncmeta';
+let syncBusy=false,syncPending=false,syncTimer=null,syncStatus='',syncWarn=false;
+function getSyncId(){return lsGet(KEY_SYNC);}
+function validSyncId(v){return typeof v==='string'&&/^[A-Za-z0-9_-]{20,64}$/.test(v);}
+function randId(n){
+  const a=new Uint8Array(n);
+  (window.crypto||window.msCrypto).getRandomValues(a);
+  let r='';for(const b of a)r+='abcdefghijklmnopqrstuvwxyz0123456789'[b%36];
+  return r;
+}
+function deviceId(){
+  let d=lsGet(KEY_DEV);
+  if(!d){d='d'+randId(8);try{localStorage.setItem(KEY_DEV,d);}catch(e){}}
+  return d;
+}
+function fbKey(x){return String(x).replace(/[.$#\[\]\/\u0000-\u001f\u007f]/g,'_');}
+function clock(ts){const d=new Date(ts);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
+function setSync(text,warn){
+  syncStatus=text;syncWarn=!!warn;
+  const el=document.getElementById('sync-status');if(el){el.textContent=text;el.className='msg'+(warn?' warn':'');}
+}
+function scheduleSync(){
+  if(!getSyncId())return;
+  clearTimeout(syncTimer);syncTimer=setTimeout(()=>{syncNow();},1500);
+}
+function packEntry(e){return{date:e.date||'',tag:e.tag||'',orig:e.orig||'',fix:e.fix||'',why:e.why||'',scene:e.scene||'',intent:e.intent||'',prevFix:e.prevFix||'',said:!!e.said,wrote:!!e.wrote,used:!!e.used,u:e.u||0};}
+function normEntry(id,r){return{id,date:r.date||'',tag:r.tag||'',orig:r.orig||'',fix:r.fix||'',why:r.why||'',scene:r.scene||'',intent:r.intent||'',prevFix:r.prevFix||'',said:!!r.said,wrote:!!r.wrote,used:!!r.used,u:r.u||0};}
+function mergeEntries(r,up){
+  let changed=false;
+  const local=new Map(state.entries.map(e=>[e.id,e]));
+  for(const id in r){
+    const re=r[id];if(!re||!re.del)continue;
+    const le=local.get(id);
+    if(le&&(re.u||0)>=(le.u||0)){state.entries=state.entries.filter(x=>x.id!==id);local.delete(id);changed=true;}
+    state.tomb[id]=Math.max(state.tomb[id]||0,re.u||0);
+  }
+  for(const id in r){
+    const re=r[id];if(!re||re.del)continue;
+    const t=state.tomb[id];
+    if(t!==undefined){if(t>=(re.u||0))continue;delete state.tomb[id];}
+    const le=local.get(id);
+    if(!le){const n=normEntry(id,re);state.entries.push(n);local.set(id,n);changed=true;}
+    else if((re.u||0)>(le.u||0)){Object.assign(le,normEntry(id,re));changed=true;}
+  }
+  for(const e of state.entries){const re=r[e.id];if(!re||(e.u||0)>(re.u||0))up['entries/'+fbKey(e.id)]=packEntry(e);}
+  for(const id in state.tomb){
+    const re=r[id],tu=state.tomb[id];
+    if(!re||(re.del?tu>(re.u||0):tu>=(re.u||0)))up['entries/'+fbKey(id)]={del:true,u:tu};
+  }
+  return changed;
+}
+function normOther(id,r){return{id,date:r.date||'',tag:r.tag||'',orig:r.orig||'',fix:r.fix||'',why:r.why||'',u:r.u||0};}
+function mergeOthers(r,up){
+  let changed=false;
+  const local=new Map(state.others.map(o=>[o.id,o]));
+  for(const id in r){
+    const ro=r[id];if(!ro)continue;
+    const lo=local.get(id);
+    if(!lo){const n=normOther(id,ro);state.others.push(n);local.set(id,n);changed=true;}
+    else if((ro.u||0)>(lo.u||0)){Object.assign(lo,normOther(id,ro));changed=true;}
+  }
+  for(const o of state.others){const ro=r[o.id];if(!ro||(o.u||0)>(ro.u||0))up['others/'+fbKey(o.id)]={date:o.date,tag:o.tag,orig:o.orig,fix:o.fix||'',why:o.why||'',u:o.u||0};}
+  return changed;
+}
+function sj(x){if(x===null||typeof x!=='object')return JSON.stringify(x);if(Array.isArray(x))return'['+x.map(sj).join(',')+']';return'{'+Object.keys(x).sort().map(k=>JSON.stringify(k)+':'+sj(x[k])).join(',')+'}';}
+function packCounts(c){const o={};for(const k in c){const n=Number(c[k]);if(Number.isFinite(n)&&n>0)o[fbKey(k)]=Math.round(n);}return o;}
+function mergeCounts(r,up){
+  const me=deviceId(),rem={};
+  for(const d in r){
+    const per=r[d]||{};
+    for(const dev in per){if(dev===me)continue;
+      for(const t in per[dev]){(rem[d]=rem[d]||{})[t]=(rem[d][t]||0)+(Number(per[dev][t])||0);}}
+  }
+  const changed=sj(rem)!==sj(state.remoteCounts||{});
+  state.remoteCounts=rem;
+  for(const d in state.counts){
+    const mine=packCounts(state.counts[d]);
+    if(!Object.keys(mine).length)continue;
+    const rm=(r[d]&&r[d][me])||null;
+    if(!rm||sj(rm)!==sj(mine))up['counts/'+d+'/'+me]=mine;
+  }
+  return changed;
+}
+function mergeAnalyzed(r,up){
+  let changed=false;const have=new Set(state.analyzed);
+  for(const k in r){if(!have.has(k)){state.analyzed.push(k);have.add(k);changed=true;}}
+  for(const k of state.analyzed){if(!r[fbKey(k)])up['analyzed/'+fbKey(k)]=true;}
+  return changed;
+}
+function mergeWeekly(r,up){
+  let changed=false;
+  for(const k in r){
+    const rw=r[k];if(!rw||typeof rw.t!=='string')continue;
+    const lu=state.weeklyU[k]||0;
+    if(state.weekly[k]===undefined||(rw.u||0)>lu){state.weekly[k]=rw.t;state.weeklyU[k]=rw.u||0;changed=true;}
+  }
+  for(const k in state.weekly){
+    const rw=r[fbKey(k)];const lu=state.weeklyU[k]||0;
+    if(!rw||lu>(rw.u||0))up['weekly/'+fbKey(k)]={t:state.weekly[k],u:lu};
+  }
+  return changed;
+}
+function syncErrMsg(e){
+  const m=String((e&&(e.code||e.message))||e);
+  if(/permission/i.test(m))return'同期できません: Firebaseのルールで拒否されました。設定の「ルールの設定」を確認してください。';
+  if(/network|offline|timeout|unavailable/i.test(m))return'同期できません: 通信できませんでした。';
+  return'同期できません: '+m.slice(0,80);
+}
+async function syncNow(){
+  const id=getSyncId();if(!id)return;
+  if(syncBusy){syncPending=true;return;}
+  const db=initFirebase();
+  if(!db){setSync('同期できません: Firebaseに接続できません。',true);return;}
+  syncBusy=true;setSync('同期中…',false);
+  try{
+    const root=db.ref('encon_sync/'+fbKey(id));
+    const snap=await root.get();
+    const r=snap.val()||{};
+    const up={};
+    let changed=false;
+    changed=mergeEntries(r.entries||{},up)||changed;
+    changed=mergeOthers(r.others||{},up)||changed;
+    changed=mergeCounts(r.counts||{},up)||changed;
+    changed=mergeAnalyzed(r.analyzed||{},up)||changed;
+    changed=mergeWeekly(r.weekly||{},up)||changed;
+    if(Object.keys(up).length)await root.update(up);
+    persist();
+    const now=Date.now();
+    try{localStorage.setItem(KEY_SYNCMETA,String(now));}catch(e){}
+    setSync('同期済み('+clock(now)+')',false);
+    if(changed)softRender();
+  }catch(e){setSync(syncErrMsg(e),true);}
+  finally{syncBusy=false;if(syncPending){syncPending=false;scheduleSync();}}
+}
+function softRender(){
+  const ae=document.activeElement;
+  if(ae&&(ae.tagName==='TEXTAREA'||ae.tagName==='INPUT'||ae.tagName==='SELECT'))return;
+  if(busy||editBusy||editId)return;
+  if(tab==='drill'||tab==='stats'){render();return;}
+  const pill=document.getElementById('pill');
+  if(pill)pill.textContent='残り '+state.entries.filter(e=>!(e.said&&e.wrote&&e.used)).length;
 }
 function toast(s){
   const el=document.getElementById('toast');el.textContent=s;el.classList.add('show');
@@ -702,6 +862,31 @@ function viewStats(){
   return html;
 }
 
+function syncPanel(){
+  const id=getSyncId();
+  const rules='{\n  "rules": {\n    "encon_sync": {\n      "$syncId": {\n        ".read": "$syncId.length >= 20",\n        ".write": "$syncId.length >= 20"\n      }\n    }\n  }\n}';
+  let body;
+  if(!id){
+    body=`<p style="margin:0 0 10px;font-size:.9rem;color:var(--ink-soft)">PCとスマホで、同じ記録を使えるようにします。合言葉が鍵になります。</p>
+      <button class="primary" data-act="syncnew">新しく始める(合言葉を作る)</button>
+      <label for="syncid" style="margin-top:14px">別の端末で作った合言葉を入れて接続する</label>
+      <input id="syncid" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="合言葉">
+      <div style="margin-top:10px"><button data-act="syncconnect">接続する</button></div>`;
+  }else{
+    body=`<p style="margin:0 0 6px;font-size:.9rem"><b>同期: オン</b>(合言葉 …${esc(id.slice(-4))})</p>
+      <div class="msg ${syncWarn?'warn':''}" id="sync-status" style="margin:0 0 10px">${esc(syncStatus||'')}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="primary" data-act="syncnow">今すぐ同期</button><button data-act="synccopy">合言葉をコピー</button><button data-act="syncoff">この端末の同期を切る</button></div>
+      <p class="hint">別の端末では、「設定」でこの合言葉を入れて接続してください。「キーも含めてコピー」を使うと、合言葉も一緒に移せます。</p>`;
+  }
+  return`<h2>端末間の同期</h2><div class="panel">${body}
+    <details><summary>安全に使うために・ルールの設定</summary>
+      <p class="hint">合言葉を知っている人は、記録を読み書きできます。他人に教えないでください。長い乱数なので、推測はほぼ不可能です。</p>
+      <p class="hint">APIキー(AnthropicとGoogle)は同期されません。端末ごとに入れてください。</p>
+      <p class="hint">Firebaseコンソール → Realtime Database → ルール で、既存のルールの中に、次の <b>encon_sync</b> の部分を足してください。ルールの最上位に <b>".read": true</b> のような全体公開の指定があると、記録も他人に読めてしまいます。その場合は、全体公開をやめて、句動詞ノートが使う場所(users、answers、tts_usage、groupNoteBaseOverride、wordGroupExtra、groupNoteExtra、customGroups)だけに許可を付け直してください。</p>
+      <pre>${esc(rules)}</pre>
+      <div><button data-act="copyrules">ルールをコピー</button></div>
+    </details></div>`;
+}
 function viewSettings(){
   const k=getKey();
   return`<h2>APIキー</h2><div class="panel">
@@ -734,6 +919,7 @@ function viewSettings(){
       <p class="hint">使用量は、句動詞ノートと同じデータベース(tts_usage)に文字数だけを書き込んで共有しています。このキーを、この2つ以外のアプリでも使っている場合は、その分は数えられません。</p>
     </details>
   </div>
+  ${syncPanel()}
   <h2>バックアップと引っ越し</h2><div class="panel">
     <p style="margin:0 0 10px;font-size:.9rem"><b>今の画面: ${isStandalone()?'ホーム画面から開いたアプリ':'Safari(ブラウザ)'}</b></p>
     <p class="hint" style="margin:0 0 10px">iPhoneでは、ホーム画面のアイコンから開くアプリと、Safariで開くページとで、保存領域が別です。片方で入れたキーや記録は、もう片方には出ません。アイコンで使うなら、アイコンから開いた画面で一度設定してください。Safariで入れ済みなら、下の「キーも含めてコピー」を使うと、貼り付けだけで移せます。</p>
@@ -799,7 +985,7 @@ async function onClick(ev){
       const r=await regenerateFix(e,t);
       if(r.fix!==e.fix)e.prevFix=e.fix;
       e.fix=r.fix;e.why=r.why||e.why;e.scene=r.scene||e.scene;e.intent=t;
-      e.said=false;e.wrote=false;e.used=false;
+      e.said=false;e.wrote=false;e.used=false;e.u=Date.now();
       save();editBusy=false;editId=null;editMsg='';render();
       toast('直し文を作り直しました(チェックはリセット)');
     }catch(err){editBusy=false;editMsg=errMsg(err);render();}
@@ -810,6 +996,24 @@ async function onClick(ev){
       const n=await backfillOthers();busy=false;const rem=missingFixes().length;
       backfillMsg=n+'件の直し文を作りました。'+(rem?'残り'+rem+'件は作れませんでした。もう一度押してください。':'');backfillWarn=false;render();toast(n+'件作りました');
     }catch(e){busy=false;backfillMsg=errMsg(e);backfillWarn=true;render();}
+  }else if(act==='syncnew'){
+    const id=randId(26);
+    try{localStorage.setItem(KEY_SYNC,id);}catch(e){toast('保存できませんでした');return;}
+    setSync('同期中…',false);render();syncNow();
+  }else if(act==='syncconnect'){
+    const v=(document.getElementById('syncid').value||'').trim();
+    if(!validSyncId(v)){toast('合言葉の形式が違います(20文字以上の英数字)');return;}
+    try{localStorage.setItem(KEY_SYNC,v);}catch(e){toast('保存できませんでした');return;}
+    setSync('同期中…',false);render();syncNow();
+  }else if(act==='syncnow'){
+    syncNow();
+  }else if(act==='synccopy'){
+    copyText(getSyncId(),'合言葉をコピーしました');
+  }else if(act==='syncoff'){
+    if(confirm('この端末の同期を切ります(記録は端末に残り、Firebase上の記録も消えません)。よろしいですか?')){
+      try{localStorage.removeItem(KEY_SYNC);}catch(e){}setSync('',false);render();toast('同期を切りました');}
+  }else if(act==='copyrules'){
+    copyText('{\n  "rules": {\n    "encon_sync": {\n      "$syncId": {\n        ".read": "$syncId.length >= 20",\n        ".write": "$syncId.length >= 20"\n      }\n    }\n  }\n}','ルールをコピーしました');
   }else if(act==='tagtoggle'){
     const t=b.dataset.tag;if(statsOpen.has(t))statsOpen.delete(t);else statsOpen.add(t);render();
   }else if(act==='range'){
@@ -821,9 +1025,9 @@ async function onClick(ev){
     toast(r.added+'件追加'+(r.dup?'、重複'+r.dup+'件はスキップ':'')+(p.bad?'、読めない行'+p.bad+'件':''));
   }else if(act==='toggle'){
     const e=state.entries.find(x=>x.id===b.dataset.id);if(!e)return;
-    e[b.dataset.k]=!e[b.dataset.k];save();render();
+    e[b.dataset.k]=!e[b.dataset.k];e.u=Date.now();save();render();
   }else if(act==='del'){
-    if(confirm('この項目を削除しますか?')){state.entries=state.entries.filter(x=>x.id!==b.dataset.id);save();render();}
+    if(confirm('この項目を削除しますか?')){state.entries=state.entries.filter(x=>x.id!==b.dataset.id);state.tomb[b.dataset.id]=Date.now();save();render();}
   }else if(act==='filter'){onlyOpen=!onlyOpen;render();
   }else if(act==='savekey'){
     const v=(document.getElementById('key').value||'').trim();
@@ -857,7 +1061,7 @@ async function onClick(ev){
       const s=JSON.parse(document.getElementById('import').value);
       if(!s||!Array.isArray(s.entries))throw 0;
       if(!confirm('現在のデータを置き換えます。よろしいですか?'))return;
-      state={entries:s.entries,counts:s.counts||{},analyzed:s.analyzed||[],weekly:s.weekly||{},lastResult:s.lastResult||null,others:s.others||[]};
+      state=normState(s);
       const kn=applyKeys(s.keys);
       save();go('drill');toast(kn?'キーも読み込みました':'読み込みました');
     }catch(e){toast('読み込めませんでした。形式を確認してください');}
@@ -879,6 +1083,9 @@ function init(){
   tab=state.entries.length?'drill':(getKey()?'analyze':'settings');
   render();
   if(getTtsKey()||tab==='settings')loadSharedUsage();
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&getSyncId())syncNow();});
+  window.addEventListener('online',()=>{if(getSyncId())syncNow();});
+  if(getSyncId())syncNow();
 }
 if(typeof document!=='undefined')init();
 
