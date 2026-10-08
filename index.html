@@ -222,7 +222,7 @@ let statsOpen=new Set(),statsRange='7';
 
 function normState(s){
   const st={entries:Array.isArray(s.entries)?s.entries:[],counts:s.counts||{},analyzed:s.analyzed||[],weekly:s.weekly||{},lastResult:s.lastResult||null,
-    others:Array.isArray(s.others)?s.others:[],tomb:s.tomb||{},remoteCounts:s.remoteCounts||{},weeklyU:s.weeklyU||{},expr:s.expr||{},prep:s.prep||null,newDone:s.newDone||null};
+    others:Array.isArray(s.others)?s.others:[],tomb:s.tomb||{},remoteCounts:s.remoteCounts||{},weeklyU:s.weeklyU||{},expr:s.expr||{},prep:s.prep||null,prepS:s.prepS||null,newDone:s.newDone||null};
   st.entries.forEach(e=>{if(typeof e.u!=='number')e.u=0;});
   const seen=new Set();
   st.others=st.others.filter(o=>{if(!o.id)o.id=hash(o.date+'|'+o.orig);if(typeof o.u!=='number')o.u=0;if(seen.has(o.id))return false;seen.add(o.id);return true;});
@@ -1044,6 +1044,35 @@ function stockListHtml(){
   return l.length?l.map(stockItem).join(''):'<div class="empty">条件に合う表現がありません。</div>';
 }
 function renderStockList(){const el=document.getElementById('stock-list');if(el)el.innerHTML=stockListHtml();}
+/* レッスン前の準備(1): これまでのレッスンの表現(型・句)から3つ */
+function makeStockPrep(){
+  const t=todayStr(),all=Object.values(state.expr);
+  const rank=x=>(x.seen&&isDue(x,t)?0:!x.seen?1:2);
+  const sorted=all.slice().sort((a,b)=>rank(a)-rank(b)||((a.box||0)-(b.box||0))||(a.date<b.date?1:a.date>b.date?-1:0));
+  const pick=[],fns=new Set();
+  for(const x of sorted){
+    if(pick.length>=3)break;
+    if(x.fn&&fns.has(x.fn)&&sorted.length>6)continue;
+    pick.push(x.id);if(x.fn)fns.add(x.fn);
+  }
+  for(const x of sorted){if(pick.length>=3)break;if(!pick.includes(x.id))pick.push(x.id);}
+  state.prepS={date:t,ids:pick,used:[]};
+  save();
+}
+function stockPrepHtml(){
+  const p=state.prepS&&state.prepS.date===todayStr()?state.prepS:null;
+  if(!p)return`<p style="margin:0 0 10px;font-size:.9rem;color:var(--ink-soft)">これまでのレッスンで出た型・句から、次のレッスンで使うものを3つ選びます。復習が必要なもの、まだ使っていないものが優先です。</p>
+    <button class="primary block" data-act="sprepmake" ${Object.keys(state.expr).length?'':'disabled'}>これまでの表現から3つ選ぶ</button>
+    ${Object.keys(state.expr).length?'':'<p class="hint">まだ表現がありません。「分析」すると、型と句が溜まります。</p>'}`;
+  const items=p.ids.map(id=>state.expr[id]).filter(Boolean);
+  return`<p style="margin:0 0 6px;font-size:.9rem;color:var(--ink-soft)">レッスンで、1回ずつ使ってみてください。使えたらチェックします。</p>`+items.map(x=>{
+    const used=p.used.includes(x.id),exs=exprExamples(x);
+    return`<div class="prep"><div class="pt">${blankHtml(x.text)}<span class="tag" style="margin-left:8px">${x.type==='pat'?'型':'句'}</span><span class="mini-row" style="display:inline-flex;margin-left:8px">${miniSpeak(x.type==='pat'?(exs[0]||x.text):x.text)}</span></div>
+      ${x.gloss?`<div class="ps">${esc(x.gloss)}</div>`:''}
+      ${x.type==='pat'&&exs[0]?`<div class="ps">例: ${esc(exs[0])}</div>`:''}
+      <button class="chk" data-act="spreused" data-id="${x.id}" aria-pressed="${used}">${used?'使えた ✓':'レッスンで使えた'}</button></div>`;}).join('')+
+    `<div style="margin-top:8px"><button class="quiet" data-act="sprepmake">選び直す</button></div>`;
+}
 function viewStock(){
   if(rv)return viewReview();
   const all=Object.values(state.expr);
@@ -1053,7 +1082,8 @@ function viewStock(){
   let html=`<h2>表現ストック</h2>
     <div class="stat"><div class="panel"><b>${due}</b><span>今日の復習</span></div><div class="panel"><b>${pats}</b><span>型</span></div><div class="panel"><b>${chunks}</b><span>句</span></div></div>
     <div style="margin-top:12px"><button class="primary block" data-act="rvstart" ${due&&!rvLoading?'':'disabled'}>${rvLoading?'復習の準備中…':(due?'今日の復習を始める('+due+'件)':'今日の復習はありません')}</button></div>
-    <h2>レッスン前の準備</h2><div class="panel">${prepHtml()}</div>
+    <h2>レッスン前の準備</h2><div class="panel"><div class="pl" style="margin-bottom:6px">① これまでの表現から3つ</div>${stockPrepHtml()}</div>
+    <div class="panel" style="margin-top:12px"><div class="pl" style="margin-bottom:6px">② クイズの語(句動詞2つ・熟語1つ)</div>${prepHtml()}</div>
     <h2>一覧</h2>`;
   if(!all.length)return html+`<div class="empty">まだ表現がありません。<br>「分析」すると、型と句が、ここに溜まります。<br>型がまだないドリルは、「ドリル」の上のボタンで作れます。</div>`;
   html+=`<input id="stock-q" type="text" placeholder="検索(英語・日本語)" value="${esc(stockQ)}" autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -1428,6 +1458,11 @@ async function onClick(ev){
     rv.i++;rv.show=false;rv.done++;save();render();
   }else if(act==='rvend'){
     rv=null;render();
+  }else if(act==='sprepmake'){
+    makeStockPrep();render();
+  }else if(act==='spreused'){
+    const p=state.prepS;const x=state.expr[b.dataset.id];
+    if(p&&x&&!p.used.includes(x.id)){p.used.push(x.id);gradeExpr(x,'used');save();render();toast('定着度を上げました');}
   }else if(act==='prepmake'){
     if(prepLoading)return;
     prepLoading=true;render();
